@@ -174,10 +174,38 @@ ablation, keeping the 384-d output.
   100×100 map differ only in sequence length.
 - **Batching.** Variable-length sequences are padded to the batch max with an attention
   mask (padding tokens contribute nothing).
-- **Augmentation (DINO multi-crop, die-semantics-preserving).** 90° rotations, flips,
-  and **random grid crops** (which also produce the smaller/variable-size views DINO's
-  multi-crop needs — directly training the variable-res capability). **No** color jitter
-  / blur / resampling — those would corrupt discrete die states.
+- **Augmentation (DINO multi-crop, die-semantics-preserving).** The augmentation set
+  *defines the invariances the embedding learns*, so it is grounded in the wafer taxonomy,
+  not copied from natural-image SSL. MixedWM38 / WM-811K classes are defined by defect
+  **morphology and position relative to the wafer boundary — not absolute angle** (Edge-Loc
+  = edge-localized, not "top edge"; Scratch = elongated, not horizontal-only), so rotation
+  + flip are **label-preserving** — the standard practice in wafer SSL [2][30].
+  - **Rotation + flip (orientation invariances — default on):** applied by rotating /
+    reflecting the normalized `(ũ,ṽ)` die coordinates. Per-die point tokens make this
+    **lossless at any angle** (no pixel resampling), avoiding the interpolation damage that
+    forces image pipelines to quarter-turns only [30]. Config flag `orientation_invariant`
+    (default true) disables them for future orientation-aware / process-diagnostic targets
+    (scratch direction, edge sector) — §15.
+  - **Crops → DINO multi-crop + variable-size views:** the strongest single augmentation in
+    WaPIRL [2], and the source of the smaller/variable-size views that train the native
+    variable-res path. **Caveat (grounded):** rotation-invariance does *not* imply crop /
+    translation-invariance — Loc vs. Edge-Loc depends on position relative to the boundary,
+    so use **wafer-centered, boundary-preserving** crops, keep a global view retaining the
+    edge reference, and avoid the **crop+shift** combination (degraded in WaPIRL) [2][31].
+  - **Die-state noise:** Bernoulli pass↔fail toggle on a small fraction of valid dies
+    (p ≈ 0.001–0.01; WaPIRL used 0.05), categorical / masked — per-class check since thin
+    scratches are fragile [2][16].
+  - **Cutout / token dropout:** zero or drop tokens in ≤4 random regions [2].
+  - **Rotation-twist (optional ablation):** radius-dependent rotation angle [32] — natural
+    on continuous coordinates.
+  - **Not used:** color jitter, blur, Gaussian-on-codes, arbitrary pixel resampling — they
+    corrupt discrete die states [16].
+  - **GAN augmentation (optional, orthogonal):** DCGAN / conditional-GAN minority synthesis
+    [33] targets *class imbalance* for the supervised probe / same-class-positive fine-tune,
+    not label-free DINO (which needs no class balance); judge on real-only test and preserve
+    categorical states + valid mask.
+
+  The rotation/flip invariance choice is itself an **ablation** (§8.7).
 
 ---
 
@@ -552,6 +580,16 @@ baseline before Lakebase Search.
     Press, 2008 (mAP, nDCG, purity, cluster evaluation).
 29. Aumüller, Bernhardsson, Faithfull. *ANN-Benchmarks: A Benchmarking Tool for Approximate
     Nearest Neighbor Algorithms* (recall vs. QPS methodology). Information Systems, 2020.
+30. Geometric-invariance study for wafer-map pattern classification (rotation/flip
+    label-preservation; identifies Edge-Loc/Loc/Scratch). Scientific Reports, 2023.
+    (PMC10199043 — title/authors to verify.)
+31. Yu et al. *WM-811K defect-pattern recognition* — uses random rotation but avoids
+    cropping (Loc vs. Edge-Loc depends on boundary position). CAAI Trans. Intelligence
+    Technology, 2023. DOI 10.1049/cit2.12126.
+32. Hu, He, Li. *Rotation-twist wafer-map augmentation* (radius-dependent rotation). 2021.
+    (NSF-PAR 10334810 — title to verify.)
+33. *DCGAN-Based Data Augmentation for Class-Imbalanced Wafer Bin Map Defect Patterns.*
+    Applied Sciences 13(9):5507, 2023.
 
 ---
 
@@ -575,3 +613,8 @@ baseline before Lakebase Search.
   within a shared scheme. Defining this mapping is an open, non-modeling task (§5, §11.7).
 - **Continuous parametrics (deferred):** feeding per-die measurements (Idd/Vmin/Fmax)
   alongside categorical bins is a natural extension once parametric test data is available.
+- **Orientation-aware targets (future):** rotation/flip invariance is correct for the
+  standard morphology taxonomy (§5), grounded in [2][30]. If a dataset encodes scratch
+  direction, edge sector, or orientation-dependent root cause, set
+  `orientation_invariant=false` and re-ablate (§8.7) — those are different targets from
+  MixedWM38/WM-811K.

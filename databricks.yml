@@ -12,16 +12,18 @@ variables:
     description: UC schema; created idempotently by the bootstrap job.
     default: wafer_embeddings
   volume:
-    description: UC volume for raw MixedWM38 data; created by bootstrap.
+    description: UC volume for raw wafer data; created by bootstrap.
     default: raw
   # Pin a modern serverless environment: the default/base env is old
   # (Python 3.10, no mlflow/torch) — see SPECS.md §16 item 17.
   serverless_environment_version:
     default: "3"
-  # MixedWM38 .npz source. Set before running the ingest job (or pre-place the
-  # file in the volume and pass --npz). Left empty so nothing downloads by default.
-  mixedwm38_url:
-    default: ""
+  # WM-811K archive URL (zip containing LSWMD.pkl). Downloaded Databricks-side.
+  dataset_url:
+    default: "http://mirlab.org/dataSet/public/MIR-WM811K.zip"
+  # Rows to ingest (0 = all ~811K). Set small for a cheap first validation run.
+  ingest_limit:
+    default: "0"
 
 artifacts:
   wafer_embeddings_wheel:

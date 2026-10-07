@@ -1,24 +1,25 @@
 import numpy as np
 
-from wafer_embeddings.data import mixedwm38 as mw
-from wafer_embeddings.jobs.ingest import parsed_to_rows
+from wafer_embeddings.data import wm811k as wm
+from wafer_embeddings.jobs.ingest import wm811k_rows
 
 
-def test_parsed_to_rows_roundtrips_shape_and_fields():
+def test_wm811k_rows_roundtrips_variable_sizes_and_labels():
     rng = np.random.default_rng(0)
-    maps = rng.integers(0, 3, size=(5, 8, 8), dtype=np.uint8)
-    labels = np.zeros((5, 8), dtype=np.uint8)
-    labels[0, 0] = 1  # Center
-    parsed = mw.parse_arrays(maps, labels)
-    rows = parsed_to_rows(parsed)
+    maps = [
+        rng.integers(0, 3, size=(10, 12), dtype=np.uint8),
+        rng.integers(0, 3, size=(26, 26), dtype=np.uint8),
+    ]
+    parsed = wm.parse_records(maps, ["Scratch", ""])
+    rows = wm811k_rows(parsed)
 
-    assert len(rows) == parsed.maps.shape[0]
-    r = rows[0]
-    assert set(r) == {"id", "height", "width", "wafer_map", "labels", "pattern", "split"}
-    assert r["height"] == 8 and r["width"] == 8
-    assert len(r["wafer_map"]) == 8 * 8  # flattened map
-    assert len(r["labels"]) == 8
-    assert r["split"] in {"train", "val", "test"}
-    # Flattened map reconstructs the original parsed map.
-    recon = np.array(r["wafer_map"], dtype=np.uint8).reshape(8, 8)
+    assert len(rows) == len(parsed.maps)
+    r0 = rows[0]
+    assert set(r0) == {"id", "height", "width", "wafer_map", "label", "label_id", "split"}
+    # Flattened map reconstructs the original (variable) shape.
+    recon = np.array(r0["wafer_map"], dtype=np.uint8).reshape(r0["height"], r0["width"])
     np.testing.assert_array_equal(recon, parsed.maps[0])
+    # Labeled vs unlabeled carried through.
+    assert rows[0]["label"] == "Scratch" and rows[0]["label_id"] == wm.label_to_id("Scratch")
+    assert rows[1]["label"] is None and rows[1]["label_id"] == wm.UNLABELED
+    assert all(r["split"] in {"train", "val", "test"} for r in rows)

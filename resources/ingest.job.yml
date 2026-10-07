@@ -3,8 +3,8 @@ resources:
     ingest:
       name: wafer-embeddings-ingest
       description: >-
-        Download MixedWM38 into the UC volume and write parsed wafers (dedup +
-        leakage-safe splits) to a Delta table (SPECS.md §7). Set var.mixedwm38_url first.
+        Download WM-811K, load LSWMD.pkl, and write parsed wafers (variable-size,
+        single-label; dedup + leakage-safe splits) to a Delta table (SPECS.md §7).
       tasks:
         - task_key: ingest
           python_wheel_task:
@@ -20,7 +20,9 @@ resources:
               - "--table"
               - "wafer_maps"
               - "--source-url"
-              - "${var.mixedwm38_url}"
+              - "${var.dataset_url}"
+              - "--limit"
+              - "${var.ingest_limit}"
           environment_key: default
       environments:
         - environment_key: default
@@ -28,3 +30,5 @@ resources:
             environment_version: "${var.serverless_environment_version}"
             dependencies:
               - ../dist/*.whl
+              - pandas
+              - pyarrow

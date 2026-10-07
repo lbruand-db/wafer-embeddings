@@ -11,13 +11,33 @@ real file; ``load_npz`` is the thin I/O wrapper used by the ingest job.
 
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass
 
 import numpy as np
 
-# Cell states (SPECS.md §2). ``no_die`` cells are dropped at tokenization time.
-NO_DIE, PASS, FAIL = 0, 1, 2
+from wafer_embeddings.data.common import (  # re-exported for back-compat
+    FAIL,
+    NO_DIE,
+    PASS,
+    content_hash,
+    dedup_indices,
+    split_assignments,
+)
+
+__all__ = [
+    "FAIL",
+    "NO_DIE",
+    "PASS",
+    "BASE_DEFECTS",
+    "content_hash",
+    "dedup_indices",
+    "split_assignments",
+    "pattern_key",
+    "pattern_name",
+    "ParsedWafers",
+    "parse_arrays",
+    "load_npz",
+]
 
 # Base defect names. NOTE: the exact column order of ``arr_1`` must be confirmed
 # against the MixedWM38 README before trusting pattern *names* (the mechanics below
@@ -45,63 +65,6 @@ def pattern_name(key: tuple[int, ...]) -> str:
     if not key:
         return "Normal"
     return "+".join(BASE_DEFECTS[i] for i in key)
-
-
-def content_hash(wafer_map: np.ndarray) -> str:
-    """Stable hash of a wafer map's exact contents (shape-sensitive)."""
-    a = np.ascontiguousarray(wafer_map, dtype=np.uint8)
-    h = hashlib.sha1(a.shape.__repr__().encode())
-    h.update(a.tobytes())
-    return h.hexdigest()
-
-
-def dedup_indices(maps: np.ndarray) -> np.ndarray:
-    """Indices of the first occurrence of each distinct map (exact-content dedup).
-
-    Catches exact duplicates (incl. identical GAN copies). Near-duplicate detection
-    is left to a later pass (SPECS.md §16 item 21).
-    """
-    seen: set[str] = set()
-    keep: list[int] = []
-    for i, m in enumerate(maps):
-        hid = content_hash(m)
-        if hid not in seen:
-            seen.add(hid)
-            keep.append(i)
-    return np.asarray(keep, dtype=np.int64)
-
-
-def _unit_hash(wafer_map: np.ndarray, salt: str) -> float:
-    """Map content -> deterministic float in [0, 1) via a salted hash."""
-    h = hashlib.sha1(salt.encode())
-    h.update(content_hash(wafer_map).encode())
-    return int(h.hexdigest()[:8], 16) / 0x100000000
-
-
-def split_assignments(
-    maps: np.ndarray,
-    fractions: tuple[float, float, float] = (0.8, 0.1, 0.1),
-    salt: str = "wafer-embeddings/v1",
-) -> np.ndarray:
-    """Assign each map to 'train'/'val'/'test' by content hash.
-
-    Leakage-safe: identical maps always land in the same split, so duplicates (or a
-    wafer that also appears in pretraining) cannot straddle the split boundary
-    (SPECS.md §8.7). Deterministic given ``salt``.
-    """
-    if not np.isclose(sum(fractions), 1.0):
-        raise ValueError(f"fractions must sum to 1.0, got {fractions}")
-    train_f, val_f, _ = fractions
-    names = np.empty(len(maps), dtype=object)
-    for i, m in enumerate(maps):
-        u = _unit_hash(m, salt)
-        if u < train_f:
-            names[i] = "train"
-        elif u < train_f + val_f:
-            names[i] = "val"
-        else:
-            names[i] = "test"
-    return names
 
 
 @dataclass(frozen=True)

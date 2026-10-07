@@ -23,3 +23,11 @@ def test_wm811k_rows_roundtrips_variable_sizes_and_labels():
     assert rows[0]["label"] == "Scratch" and rows[0]["label_id"] == wm.label_to_id("Scratch")
     assert rows[1]["label"] is None and rows[1]["label_id"] == wm.UNLABELED
     assert all(r["split"] in {"train", "val", "test"} for r in rows)
+
+
+def test_wm811k_rows_invokes_progress():
+    maps = [np.zeros((4, 4), dtype=np.uint8), np.ones((4, 4), dtype=np.uint8)]
+    parsed = wm.parse_records(maps, ["Loc", "Center"])
+    calls = []
+    wm811k_rows(parsed, progress=lambda done, total: calls.append((done, total)))
+    assert calls[-1] == (len(parsed.maps), len(parsed.maps))

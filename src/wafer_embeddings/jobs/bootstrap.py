@@ -55,11 +55,14 @@ def main(argv: list[str] | None = None) -> None:  # pragma: no cover - needs Spa
     parser.add_argument("--volume", required=True)
     args = parser.parse_args(argv)
 
+    from wafer_embeddings.obs import get_logger
+
+    log = get_logger("wafer_embeddings.bootstrap")
     spark = _get_spark()
     for stmt in build_bootstrap_sql(args.catalog, args.schema, args.volume):
-        print(f"[bootstrap] {stmt}")
+        log.info(stmt)
         spark.sql(stmt)
-    print("[bootstrap] done")
+    log.info("done")
 
 
 if __name__ == "__main__":  # pragma: no cover

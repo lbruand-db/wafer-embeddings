@@ -11,6 +11,7 @@ Pure functions over numpy/lists so they are testable without the real pickle.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Callable
 
 import numpy as np
 
@@ -83,22 +84,28 @@ def parse_records(
     fractions: tuple[float, float, float] = (0.8, 0.1, 0.1),
     salt: str = "wafer-embeddings/wm811k/v1",
     skip_invalid: bool = True,
+    progress: Callable[[int, int], None] | None = None,
 ) -> ParsedWM811K:
     """Validate/clean maps + labels, dedup, and assign leakage-safe splits.
 
     With ``skip_invalid`` (default), maps that aren't 2-D {0,1,2} are dropped (robust
-    to real-world oddities); otherwise a bad map raises.
+    to real-world oddities); otherwise a bad map raises. ``progress(done, total)`` is
+    called per input map if provided.
     """
+    maps = list(maps)
+    raw_labels = list(raw_labels)
+    total = len(maps)
     cleaned: list[np.ndarray] = []
     names: list[str | None] = []
-    for m, raw in zip(maps, raw_labels):
+    for i, (m, raw) in enumerate(zip(maps, raw_labels), start=1):
         a = _valid_map(m)
-        if a is None:
-            if skip_invalid:
-                continue
+        if a is None and not skip_invalid:
             raise ValueError("invalid wafer map (need 2-D with cells in {0,1,2})")
-        cleaned.append(a)
-        names.append(clean_label(raw))
+        if a is not None:
+            cleaned.append(a)
+            names.append(clean_label(raw))
+        if progress is not None:
+            progress(i, total)
 
     keep = dedup_indices(cleaned)
     maps_out = [cleaned[i] for i in keep]

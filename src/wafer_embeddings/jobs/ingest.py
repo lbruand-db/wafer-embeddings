@@ -12,17 +12,22 @@ untrusted data — it is fetched and read only on the Databricks side, never loc
 from __future__ import annotations
 
 import argparse
+from typing import Callable
 
 import numpy as np
 
 from wafer_embeddings.data import wm811k as wm
+from wafer_embeddings.obs import get_logger, periodic, stage
 
 WM811K_URL = "http://mirlab.org/dataSet/public/MIR-WM811K.zip"
 
 
-def wm811k_rows(parsed: wm.ParsedWM811K) -> list[dict]:
+def wm811k_rows(
+    parsed: wm.ParsedWM811K, progress: Callable[[int, int], None] | None = None
+) -> list[dict]:
     """Flatten parsed WM-811K wafers into Delta-ready row dicts."""
     rows = []
+    n = len(parsed.maps)
     for i, m in enumerate(parsed.maps):
         rows.append(
             {
@@ -35,10 +40,12 @@ def wm811k_rows(parsed: wm.ParsedWM811K) -> list[dict]:
                 "split": str(parsed.split[i]),
             }
         )
+        if progress is not None:
+            progress(i + 1, n)
     return rows
 
 
-def _ensure_pickle(source_url: str, vol: str) -> str:  # pragma: no cover - IO
+def _ensure_pickle(source_url: str, vol: str, log) -> str:  # pragma: no cover - IO
     """Download + unzip the WM-811K archive into the volume; return the .pkl path."""
     import os
     import urllib.request
@@ -46,13 +53,15 @@ def _ensure_pickle(source_url: str, vol: str) -> str:  # pragma: no cover - IO
 
     zip_path = f"{vol}/MIR-WM811K.zip"
     if not os.path.exists(zip_path):
-        print(f"[ingest] downloading {source_url} -> {zip_path}")
+        log.info(f"downloading {source_url} -> {zip_path}")
         urllib.request.urlretrieve(source_url, zip_path)  # noqa: S310
+    else:
+        log.info(f"using existing archive {zip_path}")
     with zipfile.ZipFile(zip_path) as zf:
-        members = zf.namelist()
-        pkls = [m for m in members if m.lower().endswith(".pkl")]
+        pkls = [m for m in zf.namelist() if m.lower().endswith(".pkl")]
         if not pkls:
-            raise RuntimeError(f"no .pkl in archive; contents={members}")
+            raise RuntimeError(f"no .pkl in archive; contents={zf.namelist()}")
+        log.info(f"extracting {pkls[0]}")
         zf.extract(pkls[0], vol)
         return f"{vol}/{pkls[0]}"
 
@@ -71,23 +80,33 @@ def main(argv: list[str] | None = None) -> None:  # pragma: no cover - needs Spa
     import pandas as pd  # ty: ignore[unresolved-import]
     from databricks.sdk.runtime import spark  # type: ignore
 
+    log = get_logger("wafer_embeddings.ingest")
     vol = f"/Volumes/{args.catalog}/{args.schema}/{args.volume}"
-    pkl = args.pkl or _ensure_pickle(args.source_url, vol)
-    print(f"[ingest] reading {pkl}")
-    df = pd.read_pickle(pkl)
+
+    with stage(log, "ensure dataset"):
+        pkl = args.pkl or _ensure_pickle(args.source_url, vol, log)
+    with stage(log, f"read_pickle {pkl}"):
+        df = pd.read_pickle(pkl)
     if args.limit:
         df = df.iloc[: args.limit]
-    print(f"[ingest] {len(df)} raw rows; columns={list(df.columns)}")
+    log.info(f"{len(df)} raw rows; columns={list(df.columns)}")
 
-    parsed = wm.parse_records(df["waferMap"].to_list(), df["failureType"].to_list())
-    rows = wm811k_rows(parsed)
+    with stage(log, "parse records"):
+        parsed = wm.parse_records(
+            df["waferMap"].to_list(),
+            df["failureType"].to_list(),
+            progress=periodic(log.info, "parse"),
+        )
     labeled = int((parsed.label_ids >= 0).sum())
-    print(f"[ingest] parsed {len(rows)} unique maps ({labeled} labeled)")
+    log.info(f"parsed {len(parsed.maps)} unique maps ({labeled} labeled)")
 
-    sdf = spark.createDataFrame(pd.DataFrame(rows))
+    with stage(log, "build rows"):
+        rows = wm811k_rows(parsed, progress=periodic(log.info, "rows"))
+
     fqn = f"{args.catalog}.{args.schema}.{args.table}"
-    sdf.write.mode("overwrite").saveAsTable(fqn)
-    print(f"[ingest] wrote {len(rows)} rows to {fqn}")
+    with stage(log, f"write {fqn}"):
+        spark.createDataFrame(pd.DataFrame(rows)).write.mode("overwrite").saveAsTable(fqn)
+    log.info(f"wrote {len(rows)} rows to {fqn}")
 
 
 if __name__ == "__main__":  # pragma: no cover

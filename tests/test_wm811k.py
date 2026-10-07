@@ -48,6 +48,14 @@ def test_parse_records_dedup():
     assert len(parsed.maps) == 2  # exact duplicate dropped
 
 
+def test_parse_records_invokes_progress():
+    maps = [_vmap(6, 6, i) for i in range(5)]
+    calls = []
+    wm.parse_records(maps, [""] * 5, progress=lambda done, total: calls.append((done, total)))
+    assert calls[-1] == (5, 5)  # reports completion over all inputs
+    assert all(t == 5 for _, t in calls)
+
+
 def test_parse_records_skips_or_raises_on_invalid():
     good = _vmap(6, 6, 6)
     bad_val = np.full((5, 5), 7, dtype=np.uint8)  # illegal cell value

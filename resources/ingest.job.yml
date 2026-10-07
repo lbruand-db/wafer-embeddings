@@ -27,4 +27,4 @@ resources:
           spec:
             environment_version: "${var.serverless_environment_version}"
             dependencies:
-              - ./dist/*.whl
+              - ../dist/*.whl

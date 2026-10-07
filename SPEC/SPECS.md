@@ -31,6 +31,13 @@ Labels are used **for evaluation only**; the representation is learned/served la
 mixed map is a co-occurrence of single-defect patterns (e.g. `Center+Scratch`). Each
 cell is **3-valued**: no-die (outside wafer), passing die, failing die.
 
+> **Binning is richer in production than in MixedWM38.** Real wafer test assigns each die
+> a **bin code**, often under several schemes at once — e.g. **electrical/parametric**
+> binning and **functional** binning. MixedWM38's pass/fail is just the degenerate
+> single-scheme case. The per-die token design (§4) must therefore carry **multiple bin
+> schemes per die simultaneously**, fused into one embedding (§5). This is forward-design:
+> the architecture supports it, but MixedWM38 can only exercise the pass/fail special case.
+
 > **Variable wafer size is a hard requirement, handled natively from day one.**
 > Production wafer maps range from **10×10 to 100×100**. MixedWM38 at a fixed 52×52 is
 > only the *reference* corpus. **No scaling/resizing is used** — resampling to a fixed
@@ -82,8 +89,11 @@ whose features suit retrieval and clustering (we train unlabeled; labels are eva
 `no-die` cells (outside the wafer) rather than feed them. This (a) naturally represents
 ragged/circular wafer shapes, and (b) cuts token count well below `H×W`
 (a wafer disc fills ≈ π/4 of its bounding square). Max tokens ≈ 10,000 at 100×100
-(dense square) → ~7,800 typical; 10×10 → ≤100. Each die's state (pass/fail) is embedded;
-position comes from its `(row, col)`.
+(dense square) → ~7,800 typical; 10×10 → ≤100. Each die's feature is a **multi-scheme bin
+descriptor** (electrical + functional + …, fused — §5), not just pass/fail; position comes
+from its center/radius-normalized coordinates. Per-die tokens are what make multi-scheme
+binning clean — a new scheme is just another embedding table added to the token, with no
+change to sequence length or attention cost.
 
 **Positional embeddings.** Encode each die's position as **coordinates normalized by
 the wafer center and radius** — `(ũ, ṽ) = ((x−x_c)/R, (y−y_c)/R)` plus radial `r` —
@@ -140,8 +150,20 @@ ablation, keeping the 384-d output.
 
 ## 5. Input representation (no resizing)
 
-- **Per-die features.** For each on-wafer die, a feature encoding its state — one-hot
-  `(pass, fail)` (2-d), with `no-die` cells excluded from the token set entirely (§4).
+- **Per-die features (multi-scheme bin fusion).** Each on-wafer die is a **multi-field
+  categorical descriptor**, not a single state. One **learned embedding table per binning
+  scheme** — e.g. `E_elec(electrical_bin)`, `E_func(functional_bin)`, `E_soft(soft_bin)` —
+  is looked up for the schemes present on that die and **fused** (sum, or concat →
+  linear-project) to the model width `d`. Pass/fail is the degenerate single-scheme case,
+  so MixedWM38 runs unchanged. `no-die` cells are excluded from the token set entirely (§4).
+  - **Missing schemes:** a die (or whole wafer) lacking a scheme gets a learned
+    **null / "scheme-absent" embedding** for that field; apply **modality dropout** during
+    pretraining so the encoder is robust to absent schemes at inference.
+  - **Cross-dataset comparability** requires a shared **canonical bin taxonomy** — see the
+    open question in §15; per-scheme vocabularies and their canonical mapping are declared
+    in config (§11.7).
+  - *(Deferred extension: continuous per-die parametrics — Idd/Vmin/Fmax — via a small MLP
+    added to the token; out of scope until parametric data is available, §15.)*
 - **Positions.** Per-die coordinates **normalized by wafer center and radius**
   (`(x−x_c)/R, (y−y_c)/R`, plus radial `r`) → 2D sinusoidal / small-MLP positional
   encoding. Normalize by wafer geometry, **not** by the defect-cloud bounding box (which
@@ -201,6 +223,10 @@ Labels (38 classes, multi-label) are used **only here**:
 - **Clustering:** NMI and ARI of k-means / HDBSCAN assignments vs. the 38 labels.
 - **Generalization across size:** eval on held-out maps at grid sizes/crops not seen in
   training, to validate the native variable-res path.
+- **Binning (validated later):** MixedWM38 exercises only the pass/fail special case. When
+  real multi-scheme bin maps are available, evaluate retrieval/clustering both *within* a
+  single scheme and on the *fused* embedding, and verify robustness to a missing scheme
+  (modality dropout, §5).
 - **Size/latency:** embedding dim (fixed 384), encoder token-count vs. accuracy curve,
   Lakebase query p50/p99 at 40K and a synthetic 1M-vector corpus.
 
@@ -326,8 +352,9 @@ Register the instance in UC (`w.database.register_database_instance(...)`) and d
 
 ### 11.7 Config-driven
 MLflow experiments + UC registry; bundle variables drive dataset path, embedding dim,
-patch/token settings, model size, and eval thresholds so the template retargets to other
-wafer datasets.
+patch/token settings, model size, eval thresholds, and the **binning schemes** (per-scheme
+names, vocabulary sizes, and canonical-taxonomy mapping — §5/§15) so the template retargets
+to other wafer datasets and binning setups.
 
 ---
 
@@ -456,3 +483,9 @@ baseline before Lakebase Search.
 - **Multi-label eval semantics:** define "relevant neighbor" precisely (exact set vs.
   Jaccard) before M2.
 - **Lakebase `lakebase_ann` dimension limits** at 384-d: confirm against current docs.
+- **Canonical bin taxonomy (owned by domain experts):** cross-product/cross-fab retrieval
+  needs a shared bin ontology (pass/fail + failure-category) so per-scheme embeddings are
+  comparable across datasets. Until it exists, cross-dataset retrieval is only meaningful
+  within a shared scheme. Defining this mapping is an open, non-modeling task (§5, §11.7).
+- **Continuous parametrics (deferred):** feeding per-die measurements (Idd/Vmin/Fmax)
+  alongside categorical bins is a natural extension once parametric test data is available.

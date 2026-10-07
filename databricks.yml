@@ -18,6 +18,10 @@ variables:
   # (Python 3.10, no mlflow/torch) — see SPECS.md §16 item 17.
   serverless_environment_version:
     default: "3"
+  # MixedWM38 .npz source. Set before running the ingest job (or pre-place the
+  # file in the volume and pass --npz). Left empty so nothing downloads by default.
+  mixedwm38_url:
+    default: ""
 
 artifacts:
   wafer_embeddings_wheel:

@@ -1,0 +1,30 @@
+resources:
+  jobs:
+    ingest:
+      name: wafer-embeddings-ingest
+      description: >-
+        Download MixedWM38 into the UC volume and write parsed wafers (dedup +
+        leakage-safe splits) to a Delta table (SPECS.md §7). Set var.mixedwm38_url first.
+      tasks:
+        - task_key: ingest
+          python_wheel_task:
+            package_name: wafer_embeddings
+            entry_point: wafer-ingest
+            parameters:
+              - "--catalog"
+              - "${var.catalog}"
+              - "--schema"
+              - "${var.schema}"
+              - "--volume"
+              - "${var.volume}"
+              - "--table"
+              - "wafer_maps"
+              - "--source-url"
+              - "${var.mixedwm38_url}"
+          environment_key: default
+      environments:
+        - environment_key: default
+          spec:
+            environment_version: "${var.serverless_environment_version}"
+            dependencies:
+              - ./dist/*.whl

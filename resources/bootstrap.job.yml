@@ -1,0 +1,26 @@
+resources:
+  jobs:
+    bootstrap:
+      name: wafer-embeddings-bootstrap
+      description: >-
+        Idempotently create the UC schema + volume for the project (SPECS.md §11.8).
+        Safe to re-run; creates nothing that already exists.
+      tasks:
+        - task_key: bootstrap
+          python_wheel_task:
+            package_name: wafer_embeddings
+            entry_point: wafer-bootstrap
+            parameters:
+              - "--catalog"
+              - "${var.catalog}"
+              - "--schema"
+              - "${var.schema}"
+              - "--volume"
+              - "${var.volume}"
+          environment_key: default
+      environments:
+        - environment_key: default
+          spec:
+            environment_version: "${var.serverless_environment_version}"
+            dependencies:
+              - ./dist/*.whl

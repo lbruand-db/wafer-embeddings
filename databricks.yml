@@ -1,0 +1,33 @@
+bundle:
+  name: wafer-embeddings
+
+include:
+  - resources/*.yml
+
+variables:
+  catalog:
+    description: Unity Catalog catalog (assumed to pre-exist at metastore level).
+    default: mmf_mlops_demo_catalog
+  schema:
+    description: UC schema; created idempotently by the bootstrap job.
+    default: wafer_embeddings
+  volume:
+    description: UC volume for raw MixedWM38 data; created by bootstrap.
+    default: raw
+  # Pin a modern serverless environment: the default/base env is old
+  # (Python 3.10, no mlflow/torch) — see SPECS.md §16 item 17.
+  serverless_environment_version:
+    default: "3"
+
+artifacts:
+  wafer_embeddings_wheel:
+    type: whl
+    path: .
+    build: uv build --wheel
+
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace:
+      host: https://fevm-mmf-mlops-demo.cloud.databricks.com

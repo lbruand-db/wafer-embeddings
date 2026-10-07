@@ -1,6 +1,13 @@
 # wafer-embeddings
 
 [![CI](https://github.com/lbruand-db/wafer-embeddings/actions/workflows/ci.yml/badge.svg)](https://github.com/lbruand-db/wafer-embeddings/actions/workflows/ci.yml)
+[![uv](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/uv/main/assets/badge/v0.json)](https://github.com/astral-sh/uv)
+[![code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+[![types: ty](https://img.shields.io/badge/types-ty-261230.svg)](https://github.com/astral-sh/ty)
+[![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12-3776AB?logo=python&logoColor=white)](pyproject.toml)
+[![Databricks Asset Bundle](https://img.shields.io/badge/Databricks-Asset%20Bundle-FF3621?logo=databricks&logoColor=white)](databricks.yml)
+[![AI Runtime](https://img.shields.io/badge/Databricks%20AI%20Runtime-serverless%20GPU-FF3621?logo=databricks&logoColor=white)](SPEC/SPECS.md#11-databricks-implementation-stack)
+[![Lakebase Search](https://img.shields.io/badge/Lakebase%20Search-planned-FF3621?logo=databricks&logoColor=white)](SPEC/SPECS.md#9-lakebase-search-integration)
 
 Per-die Vision-Transformer + DINO embedding model for semiconductor wafer maps
 (reference dataset: [MixedWM38](https://github.com/Junliangwangdhu/WaferMap)), served into

@@ -44,6 +44,23 @@ def _unit_hash(wafer_map: np.ndarray, salt: str) -> float:
     return int(h.hexdigest()[:8], 16) / 0x100000000
 
 
+def split_for(
+    wafer_map: np.ndarray,
+    fractions: tuple[float, float, float] = (0.8, 0.1, 0.1),
+    salt: str = "wafer-embeddings/v1",
+) -> str:
+    """Assign one map to 'train'/'val'/'test' by salted content hash (streaming-safe)."""
+    if not np.isclose(sum(fractions), 1.0):
+        raise ValueError(f"fractions must sum to 1.0, got {fractions}")
+    train_f, val_f, _ = fractions
+    u = _unit_hash(wafer_map, salt)
+    if u < train_f:
+        return "train"
+    if u < train_f + val_f:
+        return "val"
+    return "test"
+
+
 def split_assignments(
     maps,
     fractions: tuple[float, float, float] = (0.8, 0.1, 0.1),
@@ -55,17 +72,4 @@ def split_assignments(
     wafer that also appears in pretraining) cannot straddle the boundary (SPECS.md §8.7).
     Accepts a 3-D array or a list of variable-size 2-D maps.
     """
-    if not np.isclose(sum(fractions), 1.0):
-        raise ValueError(f"fractions must sum to 1.0, got {fractions}")
-    train_f, val_f, _ = fractions
-    maps_list = list(maps)
-    names = np.empty(len(maps_list), dtype=object)
-    for i, m in enumerate(maps_list):
-        u = _unit_hash(m, salt)
-        if u < train_f:
-            names[i] = "train"
-        elif u < train_f + val_f:
-            names[i] = "val"
-        else:
-            names[i] = "test"
-    return names
+    return np.array([split_for(m, fractions, salt) for m in maps], dtype=object)

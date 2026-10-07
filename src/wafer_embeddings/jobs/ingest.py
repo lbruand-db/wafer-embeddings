@@ -1,18 +1,20 @@
 """Ingest WM-811K into Delta (SPECS.md §7, §16 item 21).
 
-Downloads the WM-811K archive, loads ``LSWMD.pkl`` (a pickled pandas DataFrame),
-parses variable-size maps + single-label classes (dedup + leakage-safe splits), and
-writes a Delta table. Row-building is a pure, tested function; download / unzip /
-pickle-load / Spark write happen Databricks-side in ``main``.
+Downloads the WM-811K archive, loads ``LSWMD.pkl`` (a pickled pandas DataFrame), then
+**streams** cleaned/deduped records to a Delta table in bounded chunks (first chunk
+overwrite, rest append). Streaming keeps peak memory flat — building all ~700K rows (plus
+a one-shot pandas->Spark conversion) on top of the in-memory pickle OOMs the driver.
+
+Row-building is pure and tested; download / unzip / pickle-load / Spark write happen
+Databricks-side in ``main``.
 
 SECURITY: ``LSWMD.pkl`` is a Python pickle (arbitrary-code on load) and the archive is
-untrusted data — it is fetched and read only on the Databricks side, never locally.
+untrusted data — fetched and read only on the Databricks side, never locally.
 """
 
 from __future__ import annotations
 
 import argparse
-from typing import Callable
 
 import numpy as np
 
@@ -22,27 +24,18 @@ from wafer_embeddings.obs import get_logger, periodic, stage
 WM811K_URL = "http://mirlab.org/dataSet/public/MIR-WM811K.zip"
 
 
-def wm811k_rows(
-    parsed: wm.ParsedWM811K, progress: Callable[[int, int], None] | None = None
-) -> list[dict]:
-    """Flatten parsed WM-811K wafers into Delta-ready row dicts."""
-    rows = []
-    n = len(parsed.maps)
-    for i, m in enumerate(parsed.maps):
-        rows.append(
-            {
-                "id": int(i),
-                "height": int(m.shape[0]),
-                "width": int(m.shape[1]),
-                "wafer_map": m.reshape(-1).astype(np.uint8).tolist(),
-                "label": parsed.label_names[i],  # None for unlabeled
-                "label_id": int(parsed.label_ids[i]),  # -1 for unlabeled
-                "split": str(parsed.split[i]),
-            }
-        )
-        if progress is not None:
-            progress(i + 1, n)
-    return rows
+def record_to_row(rec: wm.Record, row_id: int) -> dict:
+    """Flatten one Record into a Delta row dict (map stored flattened)."""
+    m = rec.wafer_map
+    return {
+        "id": int(row_id),
+        "height": int(m.shape[0]),
+        "width": int(m.shape[1]),
+        "wafer_map": m.reshape(-1).astype(np.uint8).tolist(),
+        "label": rec.label_name,  # None for unlabeled
+        "label_id": int(rec.label_id),  # -1 for unlabeled
+        "split": rec.split,
+    }
 
 
 def _ensure_pickle(source_url: str, vol: str, log) -> str:  # pragma: no cover - IO
@@ -66,8 +59,31 @@ def _ensure_pickle(source_url: str, vol: str, log) -> str:  # pragma: no cover -
         return f"{vol}/{pkls[0]}"
 
 
+def _delta_schema():  # pragma: no cover - needs pyspark
+    from pyspark.sql.types import (  # ty: ignore[unresolved-import]
+        ArrayType,
+        IntegerType,
+        LongType,
+        StringType,
+        StructField,
+        StructType,
+    )
+
+    return StructType(
+        [
+            StructField("id", LongType(), False),
+            StructField("height", IntegerType(), False),
+            StructField("width", IntegerType(), False),
+            StructField("wafer_map", ArrayType(IntegerType()), False),
+            StructField("label", StringType(), True),
+            StructField("label_id", IntegerType(), False),
+            StructField("split", StringType(), False),
+        ]
+    )
+
+
 def main(argv: list[str] | None = None) -> None:  # pragma: no cover - needs Spark
-    p = argparse.ArgumentParser(description="Ingest WM-811K into Delta.")
+    p = argparse.ArgumentParser(description="Ingest WM-811K into Delta (streaming).")
     p.add_argument("--catalog", required=True)
     p.add_argument("--schema", required=True)
     p.add_argument("--volume", default="raw")
@@ -75,6 +91,7 @@ def main(argv: list[str] | None = None) -> None:  # pragma: no cover - needs Spa
     p.add_argument("--source-url", default=WM811K_URL)
     p.add_argument("--pkl", default=None, help="Path to an already-extracted LSWMD.pkl.")
     p.add_argument("--limit", type=int, default=0, help="Rows to ingest (0 = all).")
+    p.add_argument("--chunk-size", type=int, default=25000, help="Rows per Delta write.")
     args = p.parse_args(argv)
 
     import pandas as pd  # ty: ignore[unresolved-import]
@@ -82,6 +99,9 @@ def main(argv: list[str] | None = None) -> None:  # pragma: no cover - needs Spa
 
     log = get_logger("wafer_embeddings.ingest")
     vol = f"/Volumes/{args.catalog}/{args.schema}/{args.volume}"
+    fqn = f"{args.catalog}.{args.schema}.{args.table}"
+    schema = _delta_schema()
+    cols = [f.name for f in schema.fields]
 
     with stage(log, "ensure dataset"):
         pkl = args.pkl or _ensure_pickle(args.source_url, vol, log)
@@ -91,22 +111,35 @@ def main(argv: list[str] | None = None) -> None:  # pragma: no cover - needs Spa
         df = df.iloc[: args.limit]
     log.info(f"{len(df)} raw rows; columns={list(df.columns)}")
 
-    with stage(log, "parse records"):
-        parsed = wm.parse_records(
-            df["waferMap"].to_list(),
-            df["failureType"].to_list(),
-            progress=periodic(log.info, "parse"),
-        )
-    labeled = int((parsed.label_ids >= 0).sum())
-    log.info(f"parsed {len(parsed.maps)} unique maps ({labeled} labeled)")
+    def flush(chunk: list[dict], mode: str) -> None:
+        tuples = [tuple(r[c] for c in cols) for r in chunk]
+        spark.createDataFrame(tuples, schema=schema).write.mode(mode).option(
+            "overwriteSchema", "true"
+        ).saveAsTable(fqn)
 
-    with stage(log, "build rows"):
-        rows = wm811k_rows(parsed, progress=periodic(log.info, "rows"))
-
-    fqn = f"{args.catalog}.{args.schema}.{args.table}"
-    with stage(log, f"write {fqn}"):
-        spark.createDataFrame(pd.DataFrame(rows)).write.mode("overwrite").saveAsTable(fqn)
-    log.info(f"wrote {len(rows)} rows to {fqn}")
+    seen: set[str] = set()
+    chunk: list[dict] = []
+    row_id = 0
+    written = 0
+    labeled = 0
+    mode = "overwrite"
+    prog = periodic(log.info, "scan")
+    with stage(log, f"stream -> {fqn}"):
+        records = wm.iter_records(df["waferMap"], df["failureType"], seen=seen, progress=prog)
+        for rec in records:
+            chunk.append(record_to_row(rec, row_id))
+            row_id += 1
+            labeled += int(rec.label_id >= 0)
+            if len(chunk) >= args.chunk_size:
+                flush(chunk, mode)
+                written += len(chunk)
+                mode = "append"
+                chunk = []
+                log.info(f"written {written} rows")
+        if chunk:
+            flush(chunk, mode)
+            written += len(chunk)
+    log.info(f"wrote {written} rows ({labeled} labeled) to {fqn}")
 
 
 if __name__ == "__main__":  # pragma: no cover

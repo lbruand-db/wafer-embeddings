@@ -10,12 +10,19 @@ Pure functions over numpy/lists so they are testable without the real pickle.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Callable
 
 import numpy as np
 
-from wafer_embeddings.data.common import FAIL, NO_DIE, PASS, dedup_indices, split_assignments
+from wafer_embeddings.data.common import (
+    FAIL,
+    NO_DIE,
+    PASS,
+    content_hash,
+    split_for,
+)
 
 # The 9 WM-811K classes ("none" = labeled defect-free; unlabeled maps map to id -1).
 CLASS_NAMES: tuple[str, ...] = (
@@ -59,6 +66,16 @@ def label_to_id(name: str | None) -> int:
 
 
 @dataclass(frozen=True)
+class Record:
+    """One cleaned, deduped wafer with its single label and split."""
+
+    wafer_map: np.ndarray  # (H, W) uint8
+    label_name: str | None  # None = unlabeled
+    label_id: int  # class id or -1
+    split: str  # 'train' | 'val' | 'test'
+
+
+@dataclass(frozen=True)
 class ParsedWM811K:
     maps: list[np.ndarray]  # N variable-size (H, W) uint8 maps
     label_ids: np.ndarray  # (N,) int: class id or -1 (unlabeled)
@@ -78,6 +95,39 @@ def _valid_map(m) -> np.ndarray | None:
     return a
 
 
+def iter_records(
+    maps,
+    raw_labels,
+    fractions: tuple[float, float, float] = (0.8, 0.1, 0.1),
+    salt: str = "wafer-embeddings/wm811k/v1",
+    skip_invalid: bool = True,
+    seen: set[str] | None = None,
+    progress: Callable[[int, int], None] | None = None,
+) -> Iterator[Record]:
+    """Stream cleaned, deduped ``Record``s one at a time (constant memory).
+
+    Dedup uses a running ``seen`` hash set (shared across chunks); splits are per-map
+    content hashes, so no global pass is needed. Invalid maps are skipped (or raise if
+    ``skip_invalid`` is False). ``progress(done, total)`` is called per scanned input.
+    """
+    if seen is None:
+        seen = set()
+    total = len(maps) if hasattr(maps, "__len__") else 0
+    for i, (m, raw) in enumerate(zip(maps, raw_labels), start=1):
+        a = _valid_map(m)
+        if a is None:
+            if not skip_invalid:
+                raise ValueError("invalid wafer map (need 2-D with cells in {0,1,2})")
+        else:
+            h = content_hash(a)
+            if h not in seen:
+                seen.add(h)
+                name = clean_label(raw)
+                yield Record(a, name, label_to_id(name), split_for(a, fractions, salt))
+        if progress is not None:
+            progress(i, total)
+
+
 def parse_records(
     maps,
     raw_labels,
@@ -86,30 +136,15 @@ def parse_records(
     skip_invalid: bool = True,
     progress: Callable[[int, int], None] | None = None,
 ) -> ParsedWM811K:
-    """Validate/clean maps + labels, dedup, and assign leakage-safe splits.
+    """Eager wrapper over :func:`iter_records` (materializes all records).
 
-    With ``skip_invalid`` (default), maps that aren't 2-D {0,1,2} are dropped (robust
-    to real-world oddities); otherwise a bad map raises. ``progress(done, total)`` is
-    called per input map if provided.
+    Convenient for in-memory/testing use; the ingest job uses ``iter_records`` directly
+    so it never holds every row at once.
     """
-    maps = list(maps)
-    raw_labels = list(raw_labels)
-    total = len(maps)
-    cleaned: list[np.ndarray] = []
-    names: list[str | None] = []
-    for i, (m, raw) in enumerate(zip(maps, raw_labels), start=1):
-        a = _valid_map(m)
-        if a is None and not skip_invalid:
-            raise ValueError("invalid wafer map (need 2-D with cells in {0,1,2})")
-        if a is not None:
-            cleaned.append(a)
-            names.append(clean_label(raw))
-        if progress is not None:
-            progress(i, total)
-
-    keep = dedup_indices(cleaned)
-    maps_out = [cleaned[i] for i in keep]
-    names_out = [names[i] for i in keep]
-    label_ids = np.array([label_to_id(n) for n in names_out], dtype=np.int64)
-    split = split_assignments(maps_out, fractions, salt)
-    return ParsedWM811K(maps=maps_out, label_ids=label_ids, label_names=names_out, split=split)
+    recs = list(iter_records(maps, raw_labels, fractions, salt, skip_invalid, None, progress))
+    return ParsedWM811K(
+        maps=[r.wafer_map for r in recs],
+        label_ids=np.array([r.label_id for r in recs], dtype=np.int64),
+        label_names=[r.label_name for r in recs],
+        split=np.array([r.split for r in recs], dtype=object),
+    )

@@ -1,5 +1,7 @@
 # wafer-embeddings
 
+[![CI](https://github.com/lbruand-db/wafer-embeddings/actions/workflows/ci.yml/badge.svg)](https://github.com/lbruand-db/wafer-embeddings/actions/workflows/ci.yml)
+
 Per-die Vision-Transformer + DINO embedding model for semiconductor wafer maps
 (reference dataset: [MixedWM38](https://github.com/Junliangwangdhu/WaferMap)), served into
 Lakebase Search. See [`SPEC/SPECS.md`](SPEC/SPECS.md) for the design and
@@ -42,10 +44,14 @@ tests/                    # local unit tests (no Databricks, no GPU)
 ## Local dev
 
 ```bash
-uv sync --all-extras        # create .venv and install deps
-uv run pytest               # run unit tests (CPU-only, no Databricks)
+uv sync                     # create .venv and install deps (+ dev: black, ty, pytest)
+uv run black --check .      # formatting
+uv run ty check             # type checking (Astral ty)
+uv run pytest               # unit tests (CPU-only, no Databricks)
 databricks bundle validate -t dev --profile mmf   # validate the bundle config
 ```
+
+CI (`.github/workflows/ci.yml`) runs black + ty + pytest on every push/PR.
 
 Target workspace: `fevm-mmf-mlops-demo.cloud.databricks.com` · catalog
 `mmf_mlops_demo_catalog` · schema `wafer_embeddings`.

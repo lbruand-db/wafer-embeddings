@@ -7,6 +7,7 @@ The served embedding is the **encoder** output (384-d, §3 N1); the DINO head
 from __future__ import annotations
 
 import copy
+from typing import cast
 
 import torch
 import torch.nn as nn
@@ -48,10 +49,10 @@ class DINOLoss(nn.Module):
     def forward(
         self, student_outputs: list[torch.Tensor], teacher_outputs: list[torch.Tensor]
     ) -> torch.Tensor:
+        center = cast(torch.Tensor, self.center)
         student = [F.log_softmax(s / self.student_temp, dim=-1) for s in student_outputs]
         teacher = [
-            F.softmax((t - self.center) / self.teacher_temp, dim=-1).detach()
-            for t in teacher_outputs
+            F.softmax((t - center) / self.teacher_temp, dim=-1).detach() for t in teacher_outputs
         ]
         total = student_outputs[0].new_zeros(())
         n_terms = 0
@@ -67,9 +68,8 @@ class DINOLoss(nn.Module):
     @torch.no_grad()
     def _update_center(self, teacher_cat: torch.Tensor) -> None:
         batch_center = teacher_cat.mean(dim=0, keepdim=True)
-        self.center.mul_(self.center_momentum).add_(
-            batch_center, alpha=1 - self.center_momentum
-        )
+        center = cast(torch.Tensor, self.center)
+        center.mul_(self.center_momentum).add_(batch_center, alpha=1 - self.center_momentum)
 
 
 class DinoModel(nn.Module):

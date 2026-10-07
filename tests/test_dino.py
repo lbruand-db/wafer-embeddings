@@ -1,3 +1,5 @@
+from typing import cast
+
 import numpy as np
 import torch
 
@@ -35,10 +37,10 @@ def test_loss_nonnegative_and_center_moves():
     loss_fn = DINOLoss(out_dim=64)
     s = [torch.randn(4, 64), torch.randn(4, 64)]
     t = [torch.randn(4, 64), torch.randn(4, 64)]
-    before = loss_fn.center.clone()
+    before = cast(torch.Tensor, loss_fn.center).clone()
     val = loss_fn(s, t)
     assert torch.isfinite(val) and val.item() >= 0.0 and val.ndim == 0
-    assert not torch.allclose(before, loss_fn.center)  # centering updated
+    assert not torch.allclose(before, cast(torch.Tensor, loss_fn.center))  # centering updated
 
 
 def test_teacher_is_frozen_and_ema_moves_after_step():

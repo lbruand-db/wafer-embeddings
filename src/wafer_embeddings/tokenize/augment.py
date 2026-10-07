@@ -30,9 +30,7 @@ def flip_coords(coords: np.ndarray, axis: str = "u") -> np.ndarray:
     return out.astype(np.float32)
 
 
-def toggle_die_noise(
-    state_ids: np.ndarray, p: float, rng: np.random.Generator
-) -> np.ndarray:
+def toggle_die_noise(state_ids: np.ndarray, p: float, rng: np.random.Generator) -> np.ndarray:
     """Flip pass<->fail on a Bernoulli(p) fraction of dies (SPECS.md §5)."""
     if p <= 0:
         return state_ids.copy()

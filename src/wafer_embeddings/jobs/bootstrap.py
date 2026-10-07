@@ -43,7 +43,7 @@ def _get_spark():  # pragma: no cover - requires a Databricks runtime
 
         return spark
     except Exception:
-        from pyspark.sql import SparkSession
+        from pyspark.sql import SparkSession  # ty: ignore[unresolved-import]
 
         return SparkSession.builder.getOrCreate()
 

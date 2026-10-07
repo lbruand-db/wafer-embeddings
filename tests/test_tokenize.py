@@ -31,9 +31,7 @@ def test_tokenize_coords_centered_and_unit_radius():
     assert abs(t.coords[:, 0].mean()) < 1e-5  # centroid at origin
     assert abs(t.coords[:, 1].mean()) < 1e-5
     assert abs(t.coords[:, 2].max() - 1.0) < 1e-5  # radius normalized to 1
-    np.testing.assert_allclose(
-        t.coords[:, 2], np.hypot(t.coords[:, 0], t.coords[:, 1]), atol=1e-5
-    )
+    np.testing.assert_allclose(t.coords[:, 2], np.hypot(t.coords[:, 0], t.coords[:, 1]), atol=1e-5)
 
 
 def test_tokenize_empty_wafer():

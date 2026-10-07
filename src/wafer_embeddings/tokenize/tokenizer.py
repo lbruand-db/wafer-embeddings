@@ -36,9 +36,7 @@ def tokenize(wafer_map: np.ndarray, eps: float = 1e-6) -> TokenizedWafer:
     m = np.asarray(wafer_map)
     ys, xs = np.nonzero(m != NO_DIE)  # on-wafer dies only
     if ys.size == 0:
-        return TokenizedWafer(
-            np.zeros((0, 3), np.float32), np.zeros((0,), np.int64)
-        )
+        return TokenizedWafer(np.zeros((0, 3), np.float32), np.zeros((0,), np.int64))
     cy, cx = ys.mean(), xs.mean()  # wafer center = on-wafer centroid
     du = xs.astype(np.float64) - cx
     dv = ys.astype(np.float64) - cy

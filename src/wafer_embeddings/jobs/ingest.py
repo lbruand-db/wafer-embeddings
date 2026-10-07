@@ -68,7 +68,7 @@ def main(argv: list[str] | None = None) -> None:  # pragma: no cover - needs Spa
     parsed = mw.parse_arrays(maps, labels)
     rows = parsed_to_rows(parsed)
 
-    import pandas as pd
+    import pandas as pd  # ty: ignore[unresolved-import]
 
     sdf = spark.createDataFrame(pd.DataFrame(rows))
     fqn = f"{args.catalog}.{args.schema}.{args.table}"

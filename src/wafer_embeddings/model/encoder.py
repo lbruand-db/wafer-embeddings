@@ -9,6 +9,8 @@ then L2-normalized. Output dim fixed at 384 (§3 N1).
 
 from __future__ import annotations
 
+from typing import cast
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -34,11 +36,14 @@ class CoordPositionalEncoding(nn.Module):
     def forward(self, coords: torch.Tensor) -> torch.Tensor:
         u = coords[..., 0:1]
         v = coords[..., 1:2]
-        f = self.freqs.view(*([1] * (coords.dim() - 1)), -1)  # broadcast
+        freqs = cast(torch.Tensor, self.freqs)
+        f = freqs.view(*([1] * (coords.dim() - 1)), -1)  # broadcast
         feats = torch.cat(
             [
-                torch.sin(u * f), torch.cos(u * f),
-                torch.sin(v * f), torch.cos(v * f),
+                torch.sin(u * f),
+                torch.cos(u * f),
+                torch.sin(v * f),
+                torch.cos(v * f),
                 coords,
             ],
             dim=-1,
@@ -65,9 +70,9 @@ class MultiSchemeEmbedding(nn.Module):
         # Accept (B, L) single-scheme or (B, L, S) multi-scheme.
         if state_ids.dim() == 2:
             state_ids = state_ids.unsqueeze(-1)
-        out = 0.0
-        for s, table in enumerate(self.tables):
-            out = out + table(state_ids[..., s])
+        out: torch.Tensor = self.tables[0](state_ids[..., 0])
+        for s in range(1, len(self.tables)):
+            out = out + self.tables[s](state_ids[..., s])
         return out
 
 
@@ -94,8 +99,11 @@ class PerDieViT(nn.Module):
         self.state_emb = MultiSchemeEmbedding(width, vocab_sizes)
         self.pos_enc = CoordPositionalEncoding(width, n_bands)
         self.blocks = nn.ModuleList(
-            SAB(width, n_heads) if attention == "full"
-            else ISAB(width, n_heads, n_inducing=n_inducing)
+            (
+                SAB(width, n_heads)
+                if attention == "full"
+                else ISAB(width, n_heads, n_inducing=n_inducing)
+            )
             for _ in range(depth)
         )
         self.pma = PMA(width, n_heads) if readout == "pma" else None
@@ -117,5 +125,6 @@ class PerDieViT(nn.Module):
             denom = mask.sum(dim=1, keepdim=True).clamp(min=1)
             pooled = (x * mask.unsqueeze(-1)).sum(dim=1) / denom
         else:
+            assert self.pma is not None  # guaranteed when readout == "pma"
             pooled = self.pma(x, mask)
         return F.normalize(self.proj(pooled), dim=-1)

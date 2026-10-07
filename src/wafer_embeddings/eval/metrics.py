@@ -80,10 +80,12 @@ def retrieval_metrics(
         with np.errstate(divide="ignore", invalid="ignore"):
             rec = np.where(n_rel > 0, rk.sum(axis=1) / np.maximum(n_rel, 1), 0.0)
         out[f"recall@{k}"] = float(rec.mean())
-        out[f"map@{k}"] = float(np.mean([_ap_at_k(ranked[i], int(n_rel[i]), k)
-                                         for i in range(ranked.shape[0])]))
-        out[f"ndcg@{k}"] = float(np.mean([_ndcg_at_k(ranked[i], int(n_rel[i]), k)
-                                          for i in range(ranked.shape[0])]))
+        out[f"map@{k}"] = float(
+            np.mean([_ap_at_k(ranked[i], int(n_rel[i]), k) for i in range(ranked.shape[0])])
+        )
+        out[f"ndcg@{k}"] = float(
+            np.mean([_ndcg_at_k(ranked[i], int(n_rel[i]), k) for i in range(ranked.shape[0])])
+        )
     first = np.argmax(ranked, axis=1)
     has = ranked.any(axis=1)
     rr = np.where(has, 1.0 / (first + 1), 0.0)

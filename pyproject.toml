@@ -27,7 +27,11 @@ wafer-bootstrap = "wafer_embeddings.jobs.bootstrap:main"
 wafer-ingest = "wafer_embeddings.jobs.ingest:main"
 
 [dependency-groups]
-dev = ["pytest>=8"]
+dev = [
+    "black>=26.5.1",
+    "pytest>=8",
+    "ty>=0.0.84",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -39,3 +43,10 @@ packages = ["src/wafer_embeddings"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+
+[tool.black]
+line-length = 100
+target-version = ["py311", "py312"]
+
+[tool.ty.environment]
+python-version = "3.11"

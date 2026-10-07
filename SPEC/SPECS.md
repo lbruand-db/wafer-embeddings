@@ -248,17 +248,86 @@ Use **Lakebase Search** (the `lakebase_vector` extension + `lakebase_ann` index)
 
 ---
 
-## 11. Environment & template
+## 11. Databricks implementation stack
 
-- **Workspace:** FEVM **AWS Stable Serverless** (`aws_stable_serverless`).
-- **Compute:** serverless for ingest/sync/serving; **GPU required** for training + batch
-  embedding (serverless GPU or an attached classic GPU cluster).
-- **Packaging:** Databricks Asset Bundle (DAB) — jobs (ingest, train, batch-embed,
-  lakebase-sync, eval), the Model Serving endpoint, and the Lakebase instance — so the
-  whole template deploys reproducibly.
-- **MLOps:** MLflow experiments + UC Model Registry; config-driven (dataset path,
-  embedding dim, patch/token settings, model size, eval thresholds) so the template
-  retargets to other wafer datasets.
+Workspace: FEVM **AWS Stable Serverless** (`aws_stable_serverless`). Tooling: **Python**
+(≥3.11,<3.13), **uv** (env + wheel build), **Databricks Asset Bundles (DAB)**, Databricks
+CLI. *(Version pins below reflect 2025 Databricks release notes — verify current values at
+build time; the exact accelerator menu and environment versions drift.)*
+
+### 11.1 Green-start scaffold
+No single template covers this stack (ViT/DINO + uv + DAB + Lakebase vector search) —
+confirmed against Databricks docs and the FE knowledge catalog. Start from a known-good
+base and layer the ML pieces:
+
+- **Base:** `databricks bundle init default-python` — Databricks-maintained DAB template
+  that natively uses **uv + `pyproject.toml`** and deploys on serverless. Minimal, green,
+  matches the python/uv/dab stack.
+- **MLOps Stacks** (`mlops-stacks`) is the fuller lifecycle template (training / validation
+  / deployment / batch_inference / monitoring / resources + CI/CD) but is heavier and its
+  uv + serverless-GPU support is unconfirmed — **borrow its directory taxonomy, don't start
+  from it.**
+
+### 11.2 Project layout (DAB + uv)
+```
+wafer-embeddings/
+├── databricks.yml            # bundle entry: targets (dev/prod), resources, artifacts
+├── pyproject.toml            # uv project; deps: timm, torch, mlflow, numpy/polars, …
+├── uv.lock
+├── src/wafer_embeddings/
+│   ├── data/                 # ingest + native per-die tokenizer (§5)
+│   ├── model/                # per-die ViT (patch=1, ISAB) encoder (§4,§6)
+│   ├── train/                # DINO self-distillation entrypoint
+│   ├── embed/                # batch embedding job
+│   ├── serve/                # pyfunc wrapper for Model Serving
+│   └── eval/                 # retrieval/clustering harness (§8)
+├── resources/                # *.yml job + endpoint + Lakebase resource defs
+└── tests/
+```
+Wheel build via DAB artifact `build: uv build --wheel`; serverless jobs reference it through
+`environments[].spec.dependencies: [./dist/*.whl]` + `environment_key`. Note `uv.lock` is not
+auto-applied by installing the wheel — pin runtime deps in `[project].dependencies`. Use
+`dynamic_version: true` for iterative dev deploys.
+
+### 11.3 Training compute — Databricks AI Runtime (serverless GPU)
+- **AI Runtime = serverless GPU.** ViT-S/DINO is small ⇒ default **single A10**
+  (`GPU_1xA10`); single-node **H100** only if scaling up / FSDP. Workload YAML fields:
+  `experiment_name`, `environment`, `compute`, `command`, optional UC Docker image.
+- **Serverless GPU env v4** (Aug 2025): **PyTorch 2.7.1, torchvision 0.22.1, CUDA 12.6**;
+  MLflow + PyTorch preinstalled. (Classic alt: **DBR 16.4 LTS ML GPU** — PyTorch 2.6.0+cu124,
+  torchvision 0.21.0, CUDA 12.4 — for a pinned LTS cluster.)
+- **Libraries (via uv):** `timm` (ViT backbone), a DINO implementation (or `lightly`),
+  `numpy`/`polars` for wafer tensors.
+- **Known rough edge:** launching serverless-GPU AI Runtime training *as a DAB job* is a
+  documented gap. Plan: **DAB owns ingest / batch-embed / lakebase-sync / serving; the
+  train step runs on AI Runtime** (notebook or workload CLI) and registers to UC.
+
+### 11.4 MLflow + Unity Catalog registry
+- `mlflow.set_registry_uri("databricks-uc")`; 3-part name `main.wafer_embeddings.encoder`.
+- Package as **custom `mlflow.pyfunc.PythonModel`**: `load_context` loads the torch encoder;
+  `predict` runs the §5 tokenizer + encoder → 384-d L2-normalized vector; provide
+  `infer_signature`. MLflow 3 uses `log_model(name=...)`. UC perms: `USE CATALOG`,
+  `USE SCHEMA`, `CREATE MODEL`.
+
+### 11.5 Serving
+- **Real-time:** Model Serving endpoint on the pyfunc model. Tiers: `GPU_SMALL` (T4),
+  `GPU_MEDIUM` (A10G), or **CPU** — per §4, **CPU serving is viable for ~2k-token wafers**;
+  use GPU for dense 100×100 / high throughput. **GPU-serving gotcha:** log/register the
+  model **from a GPU runtime**, else it is packaged with CPU deps and the GPU endpoint fails
+  to start (fail-fast on `DATABRICKS_ACCELERATOR`). Express deploy needs `mlflow≥3.12`,
+  `databricks-sdk≥0.102.0`, and GPU-aware `predict` code (device handling is not automatic
+  for custom pyfunc).
+- **Batch:** serverless job computes embeddings → Delta → sync to Lakebase (§9).
+
+### 11.6 Lakebase wiring
+Register the instance in UC (`w.database.register_database_instance(...)`) and declare
+`DatabricksLakebase(database_instance_name="wafer-embeddings")` in the model's MLflow
+`resources` for credential provisioning; build the `lakebase_ann` index per §9.
+
+### 11.7 Config-driven
+MLflow experiments + UC registry; bundle variables drive dataset path, embedding dim,
+patch/token settings, model size, and eval thresholds so the template retargets to other
+wafer datasets.
 
 ---
 

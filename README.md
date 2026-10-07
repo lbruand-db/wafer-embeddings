@@ -7,9 +7,21 @@ Lakebase Search. See [`SPEC/SPECS.md`](SPEC/SPECS.md) for the design and
 
 ## Status
 
-Build in progress — **P0 (reproducible substrate) + P1 (does-it-learn) scaffolding**.
-Everything is created programmatically and idempotently (SPECS.md §11.8 / N7); no
-click-ops. GPU training is **not** run yet (paused before the first billable GPU run).
+**P0 (reproducible substrate) + P1 (does-it-learn) scaffolding — code-complete,
+unit-tested on CPU (54 tests), nothing run on Databricks yet.** Paused before the first
+billable action (SPECS.md §16 gates). Everything is created programmatically and
+idempotently (§11.8 / N7); no click-ops.
+
+Built and tested:
+- `data/` — MixedWM38 parse, dedup, leakage-safe splits
+- `tokenize/` — native per-die tokenizer + die-preserving augmentations
+- `model/` — per-die ViT (patch=1), full-attention + ISAB, DINO head/loss/EMA
+- `train/` — device-agnostic DINO training step (runs on CPU)
+- `eval/` — exact-search retrieval, clustering, collapse/alignment-uniformity
+- `jobs/` — idempotent `bootstrap` + MixedWM38 `ingest` (bundle jobs, not yet run)
+
+Next (each billable → confirm first): `bundle deploy`, run `bootstrap`, set
+`var.mixedwm38_url` + run `ingest`, then the first GPU DINO training run (Gate G1).
 
 ## Layout
 

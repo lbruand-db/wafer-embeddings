@@ -580,16 +580,20 @@ baseline before Lakebase Search.
     Press, 2008 (mAP, nDCG, purity, cluster evaluation).
 29. Aumüller, Bernhardsson, Faithfull. *ANN-Benchmarks: A Benchmarking Tool for Approximate
     Nearest Neighbor Algorithms* (recall vs. QPS methodology). Information Systems, 2020.
-30. Geometric-invariance study for wafer-map pattern classification (rotation/flip
-    label-preservation; identifies Edge-Loc/Loc/Scratch). Scientific Reports, 2023.
-    (PMC10199043 — title/authors to verify.)
-31. Yu et al. *WM-811K defect-pattern recognition* — uses random rotation but avoids
-    cropping (Loc vs. Edge-Loc depends on boundary position). CAAI Trans. Intelligence
-    Technology, 2023. DOI 10.1049/cit2.12126.
-32. Hu, He, Li. *Rotation-twist wafer-map augmentation* (radius-dependent rotation). 2021.
-    (NSF-PAR 10334810 — title to verify.)
-33. *DCGAN-Based Data Augmentation for Class-Imbalanced Wafer Bin Map Defect Patterns.*
-    Applied Sciences 13(9):5507, 2023.
+30. Jeong, Lee, Park, Kim, Huh, Lee. *Wafer map failure pattern classification using
+    geometric transformation-invariant convolutional neural network.* Scientific Reports
+    13:8127, 2023. DOI 10.1038/s41598-023-34147-2. (Rotation/flip label-preservation;
+    identifies Edge-Loc/Loc/Scratch.)
+31. Yu, Chen, Xu, Hasan, Sie. *Wafer map defect patterns classification based on a
+    lightweight network and data augmentation.* CAAI Trans. Intelligence Technology
+    8(3):1029–1042, 2023. DOI 10.1049/cit2.12126. (Uses rotation but avoids cropping —
+    Loc vs. Edge-Loc depends on boundary position.)
+32. Hu, He, Li. *Semi-supervised Wafer Map Pattern Recognition using Domain-Specific Data
+    Augmentation and Contrastive Learning* (rotation-twist = radius-dependent rotation;
+    contrastive SSL). IEEE Int. Test Conf. (ITC) 2021, pp. 113–122.
+33. Park, You. *Deep Convolutional Generative Adversarial Networks-Based Data Augmentation
+    Method for Classifying Class-Imbalanced Defect Patterns in Wafer Bin Map.* Applied
+    Sciences 13(9):5507, 2023. DOI 10.3390/app13095507.
 
 ---
 

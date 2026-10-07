@@ -98,6 +98,27 @@ ISAB reduces attention cost from **O(N²) → O(N·m)** for `m` inducing points 
 mitigation for the ~10k-token cost at 100×100 (Lee et al., 2019; §13, §14). Output via
 **pooling-by-multihead-attention (PMA)** or a CLS/masked-mean readout → L2-normalize → 384-d.
 
+**Compute feasibility (per-die token budget).** Dropping off-wafer `no-die` cells leaves
+~79% (π/4) of the square grid as tokens:
+
+| Grid | Raw cells | On-wafer tokens |
+|---|---:|---:|
+| 10×10 | 100 | ~80 |
+| 52×52 (MixedWM38) | 2,704 | ~2,100 |
+| 100×100 (max) | 10,000 | ~7,850 |
+
+So the real ceiling is **~8k tokens**, hit only by the largest dense wafers. At ViT-S scale
+(d=384, 12 layers) full self-attention costs ≈ `4·N²·d` per layer ⇒ ~**1.4 TFLOP** per
+100×100 wafer forward (~15 ms on one A10 GPU; ~1 s on CPU), while MixedWM38 at ~2.1k tokens
+is ~**0.08 TFLOP** (trivial — DINO pretraining over all 38K maps is a few GPU-hours). The
+naïve `N×N` score matrix (~0.7 GB/layer/sample at 8k) is the only memory concern and is
+removed by **FlashAttention / memory-efficient SDPA** (O(N) memory). 8k tokens is routine
+for transformers (cf. SAM ViT ~4k, long-context models 8k–32k). **Guidance: use full
+attention for ≤~2k tokens — train/validate on MixedWM38 as-is — and switch the attention
+block to ISAB (O(N·m), §4) before serving native 100×100 at scale**; a 2×2 patch for only
+the largest wafers is the fallback. The Lakebase query p99 (N2) is independent of token
+count — it is ANN over fixed 384-d vectors; token count affects only the one-time encode.
+
 **Training objective caveat.** Pure instance-contrastive / DINO self-distillation can
 treat two *different* wafers of the *same* defect pattern as negatives and push them
 apart, which hurts same-pattern retrieval — our primary goal. Mitigation: evaluate
@@ -354,10 +375,11 @@ baseline before Lakebase Search.
 
 ## 15. Open questions / risks
 
-- **Long-sequence attention cost:** dense 100×100 ≈ 10k tokens. **ISAB induced attention
-  (§4) reduces this to O(N·m)** and is the primary mitigation; combined with dropping
-  `no-die` tokens (§4), gradient checkpointing, and (if still needed) a token cap or
-  smaller model when latency (N2) or training cost is exceeded.
+- **Long-sequence attention cost:** dense 100×100 ≈ 8k tokens (quantified in §4). **ISAB
+  induced attention (§4) reduces this to O(N·m)** and is the primary mitigation; combined
+  with dropping `no-die` tokens (§4), FlashAttention / memory-efficient SDPA, gradient
+  checkpointing, and (if still needed) a 2×2 patch for the largest wafers when latency (N2)
+  or training cost is exceeded. MixedWM38 (~2k tokens) runs fine with full attention.
 - **DINO from scratch on ~38K maps** may be data-limited — augmentation design (§5) and
   possibly pretraining on unlabeled WM-811K are levers; validate at M2.
 - **Positional-encoding generalization:** confirm 2D sinusoidal transfers to grid sizes

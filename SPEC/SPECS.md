@@ -624,3 +624,84 @@ baseline before Lakebase Search.
   direction, edge sector, or orientation-dependent root cause, set
   `orientation_invariant=false` and re-ablate (§8.7) — those are different targets from
   MixedWM38/WM-811K.
+
+---
+
+## 16. Technical de-risking checklist (validate empirically)
+
+Concrete questions to settle with experiments, ordered roughly by how early each could
+**kill or reshape** the approach. Tags: **[MX]** testable now on MixedWM38 · **[PLAT]**
+Databricks platform · **[DATA]** needs data beyond MixedWM38 · **[NM]** non-modeling/domain.
+
+### A. Does the model learn a useful representation?
+1. **[MX] DINO-from-scratch on ~38K maps isn't data-starved.** Check: train the per-die ViT
+   with DINO; eval kNN/linear probe + clustering vs. baselines (§8.7). Pass: beats frozen
+   DINOv2 and approaches the GNN-contrastive reference (ARI 0.89 / NMI 0.87 [9]). If it
+   fails: unlabeled WM-811K pretraining, stronger augmentation.
+2. **[MX] No dimensional collapse.** Check: effective rank / eigenspectrum + alignment &
+   uniformity during training (§8.4). Pass: effective rank ≫ 1, stable uniformity.
+3. **[MX] DINO false negatives don't sink same-pattern retrieval.** Check: pure DINO vs.
+   SWaCo same-class-positive variant on retrieval mAP (§8.7). Pass: pure-DINO mAP@10 ≥ gate;
+   else adopt same-class positives.
+
+### B. Is the per-die architecture actually feasible?
+4. **[MX] Per-die attention cost at scale.** Check: wall-clock + peak memory for full
+   attention vs. ISAB at ~2k (52×52) and ~8k (100×100) tokens on an A10; encode latency by
+   size (§4). Pass: within train budget and serving p99 (N2).
+5. **[MX] ISAB keeps quality.** Check: ablate ISAB vs. full attention at ~2k tokens (§8.7).
+   Pass: negligible retrieval/clustering drop.
+6. **[MX] patch=1 vs. 2.** Check: ablation on eval + latency. Pass: patch=1 earns its cost,
+   else fall back to 2×2.
+
+### C. Does variable-resolution / invariance hold?
+7. **[MX] Size generalization.** Check: hold out whole grid-size groups + synthetic resized
+   wafers; same pattern at different sizes → nearby embeddings (§8.5). Pass: retrieval /
+   clustering holds on unseen sizes; cosine stable across size.
+8. **[MX] Positional encoding generalizes** to grid sizes unseen in training — confirm the
+   center/radius sinusoidal scheme specifically (folds into 7).
+9. **[MX] Learned the intended invariances.** Check: cosine(wafer, rotated/flipped view) high
+   vs. different pattern low; verify crops don't confuse Loc ↔ Edge-Loc (boundary caveat,
+   §5). Pass: invariance holds for the chosen mode; no boundary-class confusion.
+10. **[MX] Masking / ragged-wafer correctness.** Check: embedding invariant to padding;
+    dropping no-die tokens doesn't change results. Pass: padding-invariance unit tests green.
+
+### D. Does the Lakebase retrieval system work?
+11. **[PLAT] Lakebase Search supports 384-d cosine.** Check: create instance,
+    `lakebase_vector` extension, `lakebase_ann` index on `vector(384)` (§9) — confirm no
+    dimension-limit issue. Pass: index builds, cosine query returns.
+12. **[PLAT] UC synced-table → Postgres `vector(384)` mapping** works end-to-end. Pass:
+    Delta embeddings sync into the Lakebase table + index.
+13. **[PLAT] ANN recall vs. exact.** Check: recall@10 vs. FAISS exact (§8.6). Pass: ≥ 0.95.
+14. **[PLAT] Query latency.** Check: p50/p99 at 40K and synthetic 1M (N2/N3). Pass: p99 < 50 ms.
+
+### E. Does training + serving run on this workspace?
+15. **[PLAT] Catalog/schema/volume exist + perms.** Check: authenticate to
+    `fevm-mmf-mlops-demo`; `USE CATALOG/SCHEMA`, `CREATE MODEL`, volume read/write on
+    `mmf_mlops_demo_catalog.wafer_embeddings`. Pass: all granted.
+16. **[PLAT] AI Runtime serverless-GPU train path.** Check: can training launch from a DAB
+    job, or must it be the AI Runtime workload CLI / notebook (known gap, §11.3)? Pass: a
+    reproducible train → register-to-UC path exists.
+17. **[PLAT] uv + DAB green loop.** Check: `bundle init default-python`, `uv build --wheel`,
+    deploy a trivial serverless job; `timm` installs in the serverless GPU env with the
+    pinned PyTorch/CUDA (§11.3). Pass: job runs, deps resolve.
+18. **[PLAT] GPU-serving packaging gotcha.** Check: log/register the pyfunc **from a GPU
+    runtime**, deploy `GPU_SMALL`, confirm the endpoint starts (no `DATABRICKS_ACCELERATOR`
+    fail-fast); `mlflow≥3.12`, `databricks-sdk≥0.102.0` present (§11.5). Pass: GPU endpoint
+    healthy.
+19. **[PLAT] CPU serving viability** for ~2k-token wafers. Check: CPU encode latency vs.
+    budget. Pass: CPU acceptable (else GPU tier).
+20. **[PLAT] Custom pyfunc loads + predicts** (tokenizer + torch encoder, `code_paths` / deps)
+    on the endpoint. Pass: endpoint returns a 384-d normalized vector.
+
+### F. Data & forward-design items
+21. **[MX] MixedWM38 ingest / parse** — `arr_0` 52×52 {0,1,2}, `arr_1` 8-d labels; **dedup**
+    GAN-generated near-duplicates before splitting (§8.7). Pass: shapes/labels verified, no
+    split leakage.
+22. **[DATA] Multi-scheme binning fusion** — cannot be validated on MixedWM38 (pass/fail
+    only). When real multi-bin maps exist: within-scheme vs. fused retrieval, missing-scheme
+    robustness (modality dropout, §5/§8.5).
+23. **[NM] Canonical bin taxonomy** for cross-product comparability — a domain-expert
+    ontology task, not modeling (§5/§15).
+24. **[MX] Acceptance thresholds are realistic.** Check: calibrate the mAP@10 / NMI gates
+    against baselines early (§8.9); adjust the 0.80 / 0.85 starting targets once baselines
+    land.

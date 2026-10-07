@@ -62,7 +62,8 @@ cell is **3-valued**: no-die (outside wafer), passing die, failing die.
 - N3. Corpus ~40K vectors today; index design valid to **1–10M** vectors.
 - N4. **Smallest model that clears the eval bar** — minimize ViT depth/width/token count,
   not by skipping training (training is mandatory here, see §4).
-- N5. Runs on a FEVM **AWS Stable Serverless** workspace; training + batch embedding use
+- N5. Runs on the existing FEVM **MMF MLOps-demo** workspace
+  (`fevm-mmf-mlops-demo.cloud.databricks.com`, AWS); training + batch embedding use
   **serverless GPU or an attached classic GPU cluster** (GPU is required, not optional).
 - N6. Model tracked in **MLflow**, registered in **Unity Catalog Model Registry**.
 
@@ -226,17 +227,17 @@ wafer map (native H×W, 3-valued)
 ## 7. Data & training pipeline
 
 1. **Ingest** — download MixedWM38 archive from the GitHub repo into UC Volume
-   `/Volumes/main/wafer_embeddings/raw/`; parse into Delta
-   `main.wafer_embeddings.wafer_maps` (`id`, `grid` array, `height`, `width`,
+   `/Volumes/mmf_mlops_demo_catalog/wafer_embeddings/raw/`; parse into Delta
+   `mmf_mlops_demo_catalog.wafer_embeddings.wafer_maps` (`id`, `grid` array, `height`, `width`,
    `labels` multi-hot[38], `split`). *(Downloaded archive is untrusted: extract into its
    own empty dir, treat as data, never execute from it.)*
 2. **Tokenize** — §5 transform (on-wafer die tokens + positions); cache.
 3. **Train (mandatory)** — DINO self-distillation of the per-die ViT on GPU
    (serverless GPU or attached classic GPU cluster); memory-efficient / FlashAttention
    and gradient checkpointing to handle long sequences. Log to MLflow; ablate model size.
-4. **Register** — best encoder → UC Model Registry `main.wafer_embeddings.encoder`.
+4. **Register** — best encoder → UC Model Registry `mmf_mlops_demo_catalog.wafer_embeddings.encoder`.
 5. **Batch embed** — job computes 384-d vectors for the corpus → Delta
-   `main.wafer_embeddings.embeddings`.
+   `mmf_mlops_demo_catalog.wafer_embeddings.embeddings`.
 6. **Sync to Lakebase** — see §9.
 
 ---
@@ -377,9 +378,10 @@ Use **Lakebase Search** (the `lakebase_vector` extension + `lakebase_ann` index)
 
 ## 11. Databricks implementation stack
 
-Workspace: FEVM **AWS Stable Serverless** (`aws_stable_serverless`). Tooling: **Python**
-(≥3.11,<3.13), **uv** (env + wheel build), **Databricks Asset Bundles (DAB)**, Databricks
-CLI. *(Version pins below reflect 2025 Databricks release notes — verify current values at
+Workspace: existing FEVM **MMF MLOps-demo** workspace —
+`fevm-mmf-mlops-demo.cloud.databricks.com` (AWS). UC **catalog `mmf_mlops_demo_catalog`**,
+**schema `wafer_embeddings`**. Tooling: **Python** (≥3.11,<3.13), **uv** (env + wheel
+build), **Databricks Asset Bundles (DAB)**, Databricks CLI. *(Version pins below reflect 2025 Databricks release notes — verify current values at
 build time; the exact accelerator menu and environment versions drift.)*
 
 ### 11.1 Green-start scaffold
@@ -430,7 +432,7 @@ auto-applied by installing the wheel — pin runtime deps in `[project].dependen
   train step runs on AI Runtime** (notebook or workload CLI) and registers to UC.
 
 ### 11.4 MLflow + Unity Catalog registry
-- `mlflow.set_registry_uri("databricks-uc")`; 3-part name `main.wafer_embeddings.encoder`.
+- `mlflow.set_registry_uri("databricks-uc")`; 3-part name `mmf_mlops_demo_catalog.wafer_embeddings.encoder`.
 - Package as **custom `mlflow.pyfunc.PythonModel`**: `load_context` loads the torch encoder;
   `predict` runs the §5 tokenizer + encoder → 384-d L2-normalized vector; provide
   `infer_signature`. MLflow 3 uses `log_model(name=...)`. UC perms: `USE CATALOG`,

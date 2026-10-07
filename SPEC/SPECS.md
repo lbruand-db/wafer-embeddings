@@ -213,31 +213,104 @@ wafer map (native H×W, 3-valued)
 
 ---
 
-## 8. Evaluation
+## 8. Evaluation & metrics
 
-Labels (38 classes, multi-label) are used **only here**:
-- **Retrieval:** precision@k / mAP where a neighbor is "relevant" if it shares the
-  defect-pattern label set (exact-match and Jaccard-overlap variants).
-- **Classification probe:** kNN accuracy and linear-probe F1 on frozen embeddings
-  (micro/macro, multi-label aware).
-- **Clustering:** NMI and ARI of k-means / HDBSCAN assignments vs. the 38 labels.
-- **Generalization across size:** eval on held-out maps at grid sizes/crops not seen in
-  training, to validate the native variable-res path.
-- **Binning (validated later):** MixedWM38 exercises only the pass/fail special case. When
-  real multi-scheme bin maps are available, evaluate retrieval/clustering both *within* a
-  single scheme and on the *fused* embedding, and verify robustness to a missing scheme
-  (modality dropout, §5).
-- **Size/latency:** embedding dim (fixed 384), encoder token-count vs. accuracy curve,
-  Lakebase query p50/p99 at 40K and a synthetic 1M-vector corpus.
+Labels (38 classes, multi-label) are used **for evaluation only** — the encoder trains
+label-free (§4), and label-based scoring is strictly **post-hoc**, kept separate from any
+supervised fine-tuning (the protocol the wafer-SSL literature follows [9][26]). Two
+cross-cutting principles, grounded in the retrieval/IR literature [28][29]:
 
-A quantitative quality threshold (retrieval mAP ≥ X, NMI ≥ Y) is set at project start and
-gates "model is good enough / stop shrinking it."
+- **Separate three questions that are routinely conflated** [29]: (1) *representation
+  quality* — are relevant wafers near each other under the embedding? (2) *index quality* —
+  does the Lakebase ANN index reproduce exact search? (3) *serving performance* — latency /
+  throughput. Score representation with **exact** search first (FAISS inner-product on
+  L2-normalized vectors [19]); measure ANN degradation and latency separately (§8.6). An
+  index can perfectly reproduce exact search while the embedding is semantically poor, and
+  vice-versa.
+- **Report per-pattern, not just aggregate.** MixedWM38 is imbalanced and mixed/rare
+  patterns matter [16]; always report **macro + per-class** beside micro so common patterns
+  can't mask rare-pattern failures.
 
-**Baseline to beat.** The strongest comparable label-free wafer result is the
-graph-contrastive encoder of Awais et al. (2026): **ARI 0.89 / NMI 0.87** clustering on
-WM-811K (§13/§14). Use it as the clustering reference point; also benchmark the pure DINO
-encoder against a SWaCo-style same-class-positive variant for *retrieval* (the
-false-negative caveat, §4).
+### 8.1 Retrieval (primary goal)
+Ranked-retrieval metrics over held-out queries [28]: **mAP@k, Recall@k, nDCG@k, MRR,
+precision@k** (k ∈ {1,5,10,50}). State conventions explicitly (AP@K denominator; whether
+"Recall@K" is fraction-of-relevant or hit-rate — report both, labeled), since scores under
+different conventions aren't comparable [28]. **Relevance definition** (fix before M2):
+primary = **Jaccard overlap ≥ τ** on the multi-label defect set; also report strict
+**exact label-set match**; graded relevance (exact / shares-some / none) feeds nDCG.
+
+### 8.2 Clustering / pattern discovery (secondary goal)
+Following the wafer-SSL clustering convention [9][26][27]:
+- **External (label-based):** **ARI** and **NMI** as primary (one chance-adjusted, one not
+  — state the NMI normalization), plus **purity** as supplementary, *always reported with
+  the cluster count* since over-/singleton-clustering inflates purity [28].
+- **Internal (label-free):** **silhouette** (and Davies–Bouldin) so clustering is judgeable
+  on unseen patterns without labels [27].
+- **Algorithms:** **HDBSCAN** (density-based, handles noise + variable cluster count) and
+  k-means; report sensitivity to k / min-cluster-size.
+
+### 8.3 Representation probes (SSL protocol)
+The standard DINO frozen-feature protocol [1]: **weighted kNN** (cosine, exclude
+self-matches; DINO defaults k ∈ {10,20,100,200}, τ=0.07) and a **frozen linear probe**.
+Multi-label aware: **micro/macro F1, mAP, per-class recall**; balanced accuracy for
+imbalance. Fit probe / kNN bank on train, tune on val, evaluate test once; freeze encoder +
+norm stats; **report ≥3 probe seeds (mean ± std)**; pin which feature vector is used (CLS
+vs. last-4-CLS concat vs. backbone output — these differ in DINO) [1].
+
+### 8.4 Embedding health & invariance
+- **Collapse diagnostics** (DINO can collapse): centered-covariance **eigenspectrum**,
+  **effective rank**, dominant-direction fraction, total variance — on both raw and
+  L2-normalized features [25]. Flag dimensional collapse early in training.
+- **Alignment & uniformity** [24] on unit-normalized embeddings: alignment = view
+  invariance (lower is tighter), uniformity = hypersphere spread (lower is more spread);
+  interpret *jointly* (a constant embedding has perfect alignment but zero uniformity) and
+  treat as diagnostics, not a quality ranking.
+- **Invariance check:** cosine similarity between a wafer and its augmented view
+  (rotation/flip, §5) should be high vs. low to a different pattern — confirms we learned
+  the intended invariances and no unwanted ones.
+
+### 8.5 Size generalization & binning
+- **Size:** hold out whole grid-size groups (and crops) unseen in training; verify the same
+  pattern at different grid sizes maps to nearby embeddings (native variable-res path, §5).
+- **Binning (validated later):** MixedWM38 exercises only the pass/fail case. With real
+  multi-scheme bin maps, score retrieval/clustering *within* a single scheme and on the
+  *fused* embedding, and verify robustness to a missing scheme (modality dropout, §5).
+
+### 8.6 System & serving metrics (separate from representation)
+- **ANN recall@k vs. exact** [29] over identical embeddings / metric / filters — gate so
+  the index doesn't silently degrade retrieval.
+- **Serving:** **QPS at a fixed ANN-recall target**, with p50/p95/**p99** latency (N2),
+  stating what the timing includes (encode vs. index search); index build time; **encode
+  latency per wafer by grid size** (§4 FLOP table); batch-embedding throughput. Recall–QPS
+  curves, not QPS alone [29].
+- **Footprint:** index size at 384-d across the 40K → synthetic 1M corpus (N3).
+
+### 8.7 Protocol
+- **Splits (leakage control):** fixed train/val/test; exclude test wafers from DINO
+  pretraining for an **inductive** read (also report transductive); **de-duplicate**
+  MixedWM38's GAN-generated maps so near-identical synthetic copies don't straddle splits.
+- **Baselines:** random; flattened-pixels / PCA; **frozen off-the-shelf DINOv2** [21];
+  ImageNet-pretrained CNN features (cf. [27]); a **supervised ViT** upper bound (MixedWM38
+  reaches ~99% supervised, §13); and the external **graph-contrastive** reference —
+  **ARI 0.89 / NMI 0.87 / silhouette 0.76** on WM-811K [9]; WaPIRL [2] / SWaCo [10] where
+  reproducible.
+- **Ablations:** patch 1 vs. 2; **ISAB vs. full attention**; positional-encoding scheme;
+  **DINO vs. +same-class-positives (SWaCo [10])** for the retrieval false-negative risk
+  (§4); embedding dim; model-size sweep (the "smallest that passes" curve, N4);
+  augmentation set.
+- **Rigor:** multiple seeds, confidence intervals on headline claims.
+
+### 8.8 Qualitative
+Engineer-reviewed **query → top-k galleries** (especially mixed defects); **UMAP / t-SNE**
+of the embedding space colored by label; nearest-neighbor montages for pattern discovery.
+
+### 8.9 Acceptance gates
+- **Quality gate (ship / stop shrinking, N4):** retrieval **mAP@10 ≥ 0.80** and clustering
+  **NMI ≥ 0.85** — *recommended starting targets* set against the 0.87 external reference
+  [9]; **confirm at project start.**
+- **Index gate:** ANN **recall@10 ≥ 0.95** vs. exact, within the p99 budget (N2) [29].
+- **Health gate:** no dimensional collapse (effective rank well above 1) at the shipped
+  checkpoint [25].
 
 ---
 
@@ -466,6 +539,19 @@ baseline before Lakebase Search.
 22. MixedWM38 dataset — https://github.com/Junliangwangdhu/WaferMap
 23. pgvector / Lakebase Search dimension & index notes —
     https://github.com/pgvector/pgvector
+24. Wang, Isola. *Understanding Contrastive Representation Learning through Alignment and
+    Uniformity on the Hypersphere.* ICML 2020. arXiv:2005.10242.
+25. Jing, Vincent, LeCun, Tian. *Understanding Dimensional Collapse in Contrastive
+    Self-Supervised Learning.* ICLR 2022. arXiv:2110.09348.
+26. Kim, Kang. *Dynamic Clustering for Wafer Map Patterns Using Self-Supervised Learning on
+    Convolutional Autoencoders.* IEEE Trans. Semiconductor Mfg. 34(4):444–454, 2021.
+    DOI 10.1109/TSM.2021.3107720.
+27. Pleli et al. *Iterative Cluster Harvesting for Wafer Map Defect Patterns.* 2024.
+    arXiv:2404.15436.
+28. Manning, Raghavan, Schütze. *Introduction to Information Retrieval.* Cambridge Univ.
+    Press, 2008 (mAP, nDCG, purity, cluster evaluation).
+29. Aumüller, Bernhardsson, Faithfull. *ANN-Benchmarks: A Benchmarking Tool for Approximate
+    Nearest Neighbor Algorithms* (recall vs. QPS methodology). Information Systems, 2020.
 
 ---
 

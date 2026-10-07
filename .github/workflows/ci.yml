@@ -20,8 +20,8 @@ jobs:
         with:
           enable-cache: true
 
-      - name: Install dependencies (locked)
-        run: uv sync --frozen
+      - name: Install dependencies (public PyPI)
+        run: uv sync
 
       - name: Format check (black)
         run: uv run black --check .

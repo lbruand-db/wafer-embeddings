@@ -1,4 +1,9 @@
 # Python / uv
+# uv.lock here resolves against the Databricks internal PyPI proxy (per
+# ~/.config/uv), so it carries non-portable internal URLs. We don't commit it:
+# CI resolves from public PyPI. Regenerate a committable lock from an off-proxy
+# environment if fully hermetic pinning is needed later.
+uv.lock
 .venv/
 __pycache__/
 *.pyc

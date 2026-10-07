@@ -320,13 +320,15 @@ baseline before Lakebase Search.
 9. Awais, Postolache, Oliveira. *Graph-based contrastive learning for self-supervised
    semiconductor wafer defect detection.* J. Intelligent Manufacturing, 2026.
    DOI 10.1007/s10845-026-02906-3. Code: `irjawais/wafer-gnn-contrastive`.
-10. Kwak, Lee, Kim. *SWaCo: contrastive learning with same-class positives for wafer map
-    defect pattern classification.* 2023.
+10. Kwak, Lee, Kim. *SWaCo: Safe Wafer Bin Map Classification With Self-Supervised
+    Contrastive Learning.* IEEE Trans. Semiconductor Mfg. 36(3):416–424, 2023.
+    DOI 10.1109/TSM.2023.3280891.
 11. Wang et al. *A self-supervised learning framework based on masked autoencoder for
     complex wafer bin map classification* (patchMC). Expert Systems with Applications,
     2024. DOI 10.1016/j.eswa.2024.123601.
-12. *Masked autoencoder with dynamic multi-loss adaptation mechanism for few-shot wafer
-    map pattern recognition.* 2024.
+12. Liang, Zhou, Wang. *Masked autoencoder with dynamic multi-loss adaptation mechanism
+    for few-shot wafer map pattern recognition.* Engineering Applications of Artificial
+    Intelligence 137(A):109070, 2024. DOI 10.1016/j.engappai.2024.109070.
 13. Lee, Lee, Kim, Kosiorek, Choi, Teh. *Set Transformer: A Framework for Attention-based
     Permutation-Invariant Neural Networks* (ISAB, PMA). ICML 2019.
 14. Zaheer, Kottur, Ravanbakhsh, Póczos, Salakhutdinov, Smola. *Deep Sets.* NeurIPS 2017.

@@ -66,6 +66,12 @@ cell is **3-valued**: no-die (outside wafer), passing die, failing die.
   (`fevm-mmf-mlops-demo.cloud.databricks.com`, AWS); training + batch embedding use
   **serverless GPU or an attached classic GPU cluster** (GPU is required, not optional).
 - N6. Model tracked in **MLflow**, registered in **Unity Catalog Model Registry**.
+- N7. **Fully reproducible from scratch, programmatically.** Every artifact — schema /
+  volume, the Lakebase instance + `lakebase_ann` index, data download/ingest, training,
+  UC-model registration, and the serving endpoint — is created by **code** (DAB + a
+  bootstrap job using the Databricks SDK/CLI), **idempotently and with no manual UI steps**.
+  A single `bundle deploy` + bootstrap entrypoint stands the project up on a clean
+  workspace, and a teardown path removes it (§11.8).
 
 ---
 
@@ -459,6 +465,20 @@ patch/token settings, model size, eval thresholds, and the **binning schemes** (
 names, vocabulary sizes, and canonical-taxonomy mapping — §5/§15) so the template retargets
 to other wafer datasets and binning setups.
 
+### 11.8 Reproducibility — from scratch, programmatically (N7)
+Nothing is created by hand. The bundle plus a **bootstrap job** (Databricks SDK/CLI)
+create and wire everything, **idempotently** (safe to re-run):
+1. `USE CATALOG mmf_mlops_demo_catalog`; **create schema + volume** if absent (the schema
+   exists today out-of-band — the bundle still declares it so a clean workspace reproduces).
+2. **Download MixedWM38** into the volume; parse to Delta.
+3. **Provision the Lakebase instance** (`database create-database-instance`, Public Preview),
+   enable Lakebase Search, create the synced table + `lakebase_ann` index.
+4. **Train → register → serve** (train on AI Runtime, register to UC, create the endpoint).
+Expose one-shot **`bundle deploy` + bootstrap** and a **teardown** target. **Pin
+everything** — a modern serverless `environment_version` and all uv deps — because the
+default serverless env is minimal and old (§16 item 17): no mlflow/torch, Python 3.10.12,
+`databricks-sdk` 0.20.0. No notebook-only / click-ops steps may be load-bearing.
+
 ---
 
 ## 12. Deliverables & milestones
@@ -678,12 +698,21 @@ Databricks platform · **[DATA]** needs data beyond MixedWM38 · **[NM]** non-mo
 15. **[PLAT] Catalog/schema/volume exist + perms.** Check: authenticate to
     `fevm-mmf-mlops-demo`; `USE CATALOG/SCHEMA`, `CREATE MODEL`, volume read/write on
     `mmf_mlops_demo_catalog.wafer_embeddings`. Pass: all granted.
+    ✅ **Verified 2026-10-07:** workspace reachable; catalog + schema `wafer_embeddings`
+    exist; user is a **workspace admin**. Volume/tables not yet created. For N7 the bundle
+    must declare `USE CATALOG` + create the schema/volume idempotently (schema exists
+    out-of-band today).
 16. **[PLAT] AI Runtime serverless-GPU train path.** Check: can training launch from a DAB
     job, or must it be the AI Runtime workload CLI / notebook (known gap, §11.3)? Pass: a
     reproducible train → register-to-UC path exists.
 17. **[PLAT] uv + DAB green loop.** Check: `bundle init default-python`, `uv build --wheel`,
     deploy a trivial serverless job; `timm` installs in the serverless GPU env with the
     pinned PyTorch/CUDA (§11.3). Pass: job runs, deps resolve.
+    ⚠️ **Partial 2026-10-07:** a serverless notebook job runs, but the **default** serverless
+    env is minimal/old — Python 3.10.12, numpy 1.23.5, pandas 1.5.3, `databricks-sdk` 0.20.0,
+    **no mlflow/torch**. ⇒ must set a modern `environment_version` + pin all deps via uv
+    (sdk 0.20.0 ≪ the 0.102.0 express-deploy floor, §11.5). `timm`/torch/CUDA on serverless
+    **GPU** still unverified — needs the AI Runtime path (item 16).
 18. **[PLAT] GPU-serving packaging gotcha.** Check: log/register the pyfunc **from a GPU
     runtime**, deploy `GPU_SMALL`, confirm the endpoint starts (no `DATABRICKS_ACCELERATOR`
     fail-fast); `mlflow≥3.12`, `databricks-sdk≥0.102.0` present (§11.5). Pass: GPU endpoint

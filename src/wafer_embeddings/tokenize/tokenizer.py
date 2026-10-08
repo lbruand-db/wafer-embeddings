@@ -50,16 +50,30 @@ def tokenize(wafer_map: np.ndarray, eps: float = 1e-6) -> TokenizedWafer:
 
 
 def cap_tokens(w: TokenizedWafer, max_tokens: int, rng: np.random.Generator) -> TokenizedWafer:
-    """Randomly subsample dies down to ``max_tokens`` (bounds memory on huge wafers).
+    """Subsample dies to ``max_tokens`` while **keeping every FAIL die** (SPECS.md §5).
 
     WM-811K maps vary from tiny to tens of thousands of dies; capping keeps the
-    attention/activation tensors bounded. It's a token-space crop, consistent with the
-    augmentation philosophy (SPECS.md §5); positions/states of kept dies are unchanged.
+    attention/activation tensors bounded. Defects are **sparse** (often <5% of dies), so a
+    *uniform* random cap decimates the exact signal that defines a defect class — e.g. on a
+    3k-die map capped to 512 it keeps only ~1/6 of the failing dies, blurring the pattern.
+    We therefore keep **all** FAIL dies and subsample only PASS dies to fill the remaining
+    budget; positions/states of kept dies are unchanged. (Measured on WM-811K: this lifts
+    untrained 1-NN class accuracy from ~0.50 to ~0.74 — see git history / scratch/diag.py.)
+    If FAIL dies alone exceed the budget (pathological, e.g. near-full maps) we subsample
+    them too so the cap still holds.
     """
     if w.n_tokens <= max_tokens:
         return w
-    idx = np.sort(rng.choice(w.n_tokens, size=max_tokens, replace=False))
-    return TokenizedWafer(w.coords[idx], w.state_ids[idx])
+    fail = np.nonzero(w.state_ids == STATE_FAIL)[0]
+    npass = np.nonzero(w.state_ids != STATE_FAIL)[0]
+    if fail.size >= max_tokens:
+        keep = rng.choice(fail, size=max_tokens, replace=False)
+    else:
+        budget = max_tokens - fail.size
+        kept_pass = rng.choice(npass, size=budget, replace=False)
+        keep = np.concatenate([fail, kept_pass])
+    keep = np.sort(keep)
+    return TokenizedWafer(w.coords[keep], w.state_ids[keep])
 
 
 def collate(batch: list[TokenizedWafer]):

@@ -109,6 +109,28 @@ def test_cap_tokens_subsamples_and_preserves():
     assert tk.cap_tokens(t, t.n_tokens + 10, rng) is t
 
 
+def test_cap_tokens_keeps_all_fail_dies():
+    # Sparse defects must survive the cap: a uniform random cap would decimate them and
+    # destroy the defect pattern (the class signal). cap_tokens keeps every FAIL die.
+    rng = np.random.default_rng(0)
+    yy, xx = np.mgrid[0:60, 0:60]
+    inside = (yy - 29.5) ** 2 + (xx - 29.5) ** 2 <= 30**2
+    m = np.full((60, 60), NO_DIE, dtype=np.uint8)
+    m[inside] = PASS
+    m[inside & (rng.random((60, 60)) < 0.02)] = FAIL  # ~2% sparse defects
+    t = tk.tokenize(m)
+    n_fail = int((t.state_ids == tk.STATE_FAIL).sum())
+    cap = n_fail + 200  # budget comfortably above the fail count
+    assert cap < t.n_tokens  # ensure the cap actually triggers
+    capped = tk.cap_tokens(t, cap, rng)
+    assert capped.n_tokens == cap
+    assert int((capped.state_ids == tk.STATE_FAIL).sum()) == n_fail  # every FAIL kept
+
+    # pathological: budget below the fail count -> still respects the cap
+    tiny = tk.cap_tokens(t, max(n_fail // 2, 1), rng)
+    assert tiny.n_tokens == max(n_fail // 2, 1)
+
+
 def test_random_view_both_modes_valid():
     t = tk.tokenize(_disk(52, 52, 8)[0])
     rng = np.random.default_rng(3)

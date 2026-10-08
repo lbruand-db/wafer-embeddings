@@ -25,6 +25,7 @@ search = ["faiss-cpu>=1.8"]
 # Databricks python_wheel_task entry points (added as modules land).
 wafer-bootstrap = "wafer_embeddings.jobs.bootstrap:main"
 wafer-ingest = "wafer_embeddings.jobs.ingest:main"
+wafer-train = "wafer_embeddings.jobs.train:main"
 
 [dependency-groups]
 dev = [

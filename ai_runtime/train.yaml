@@ -1,0 +1,38 @@
+# Databricks AI Runtime serverless-GPU training workload (SPECS.md §4/§7/§11.3).
+#
+# AI Runtime is launched via its own CLI/YAML (or notebook) — it is NOT a Databricks
+# Asset Bundle resource, so this lives outside databricks.yml and is invoked separately
+# (the DAB owns ingest/bootstrap; this owns training).
+#
+# !! Public Preview — VERIFY the exact field names + launch command against the current
+#    docs before running: https://docs.databricks.com/aws/en/machine-learning/ai-runtime/
+#    (and .../ai-runtime/cli/yaml-config). Treat this as a starting point, not gospel.
+#
+# Prereq: build + upload the wheel so the environment can install it, e.g.
+#   uv build --wheel
+#   databricks fs cp dist/wafer_embeddings-0.1.0-py3-none-any.whl \
+#     dbfs:/Volumes/mmf_mlops_demo_catalog/wafer_embeddings/raw/dist/ --profile mmf
+
+name: wafer-embeddings-dino-g1
+experiment_name: /Shared/wafer-embeddings
+
+# ViT-S/DINO on ~2k-token WM-811K maps is small — a single A10 is right-sized (§4).
+compute: GPU_1xA10
+
+environment:
+  dependencies:
+    - torch
+    - scikit-learn
+    - mlflow
+    - /Volumes/mmf_mlops_demo_catalog/wafer_embeddings/raw/dist/wafer_embeddings-0.1.0-py3-none-any.whl
+
+# Entry point from pyproject [project.scripts]; runs the tested train package.
+command: >-
+  wafer-train
+  --catalog mmf_mlops_demo_catalog
+  --schema wafer_embeddings
+  --max-train 50000
+  --eval-cap 20000
+  --steps 2000
+  --batch-size 128
+  --attention full

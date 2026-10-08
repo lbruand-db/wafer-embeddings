@@ -39,17 +39,17 @@ def pairwise_relevant(
 def _ap_at_k(rel: np.ndarray, n_rel: int, k: int) -> float:
     if n_rel == 0:
         return 0.0
-    rel_k = rel[:k].astype(np.float64)
-    prec_at_i = np.cumsum(rel_k) / (np.arange(k) + 1)
+    rel_k = rel[:k].astype(np.float64)  # may be shorter than k if corpus < k
+    prec_at_i = np.cumsum(rel_k) / (np.arange(len(rel_k)) + 1)
     return float((prec_at_i * rel_k).sum() / min(n_rel, k))
 
 
 def _ndcg_at_k(rel: np.ndarray, n_rel: int, k: int) -> float:
     if n_rel == 0:
         return 0.0
-    discounts = 1.0 / np.log2(np.arange(2, k + 2))
-    dcg = (rel[:k].astype(np.float64) * discounts).sum()
-    idcg = discounts[: min(n_rel, k)].sum()
+    rel_k = rel[:k].astype(np.float64)  # may be shorter than k if corpus < k
+    dcg = (rel_k / np.log2(np.arange(2, len(rel_k) + 2))).sum()
+    idcg = (1.0 / np.log2(np.arange(2, min(n_rel, k) + 2))).sum()
     return float(dcg / idcg) if idcg > 0 else 0.0
 
 

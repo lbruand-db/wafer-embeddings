@@ -75,7 +75,27 @@ def _args(argv=None):
     return p.parse_args(argv)
 
 
-def load_eval_table(dset, eval_cap: int, seed: int, balanced: bool = True):  # pragma: no cover
+def load_train_table(dset, max_train: int, seed: int):
+    """Seeded uniform random sample of ``max_train`` train-split maps (0 = all).
+
+    Replaces "first N rows in scan order", which drew the whole training set from the
+    first parquet file (one slice of lots). Train maps are mostly unlabeled, so the
+    sample is uniform rather than class-stratified. Only the id column is read to pick
+    the sample; wafer maps are fetched just for the chosen ids. Uses an RNG stream
+    separate from the eval sample's, so changing one never shifts the other.
+    """
+    import pyarrow.dataset as ds
+
+    train = ds.field("split") == "train"
+    if not max_train:
+        return dset.to_table(filter=train)
+    ids = dset.to_table(columns=["id"], filter=train).column("id").to_numpy()
+    if max_train < len(ids):
+        ids = np.random.default_rng([seed, 1]).choice(ids, size=max_train, replace=False)
+    return dset.to_table(filter=train & ds.field("id").isin(ids.tolist()))
+
+
+def load_eval_table(dset, eval_cap: int, seed: int, balanced: bool = True):
     """Seeded, class-stratified labeled eval sample from a pyarrow dataset.
 
     Queries come from labeled val/test maps, the kNN bank from labeled train maps,
@@ -83,7 +103,7 @@ def load_eval_table(dset, eval_cap: int, seed: int, balanced: bool = True):  # p
     labeled set; wafer maps are fetched just for the sampled ids. The dedicated RNG
     keeps the eval set identical across runs with the same seed, so runs are comparable.
     """
-    import pyarrow.dataset as ds  # ty: ignore[unresolved-import]
+    import pyarrow.dataset as ds
 
     meta = dset.to_table(columns=["id", "label_id", "split"], filter=ds.field("label_id") >= 0)
     ids = meta.column("id").to_numpy()
@@ -100,7 +120,7 @@ def load_eval_table(dset, eval_cap: int, seed: int, balanced: bool = True):  # p
 
 def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
     import mlflow  # ty: ignore[unresolved-import]
-    import pyarrow.dataset as ds  # ty: ignore[unresolved-import]
+    import pyarrow.dataset as ds
     import torch
 
     from wafer_embeddings.eval.metrics import effective_rank
@@ -115,12 +135,11 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
     torch.manual_seed(a.seed)
 
     # AI Runtime serverless GPU has no Spark session; read the volume parquet export
-    # with pyarrow (bounded via .head so we never materialize the whole corpus).
+    # with pyarrow (seeded samples, so we never materialize the whole corpus).
     pq = f"/Volumes/{a.catalog}/{a.schema}/{a.volume}/wafer_maps_parquet"
     dset = ds.dataset(pq, format="parquet")
-    with stage(log, "load train split"):
-        scan = dset.scanner(filter=ds.field("split") == "train")
-        tbl = scan.head(a.max_train) if a.max_train else scan.to_table()
+    with stage(log, "load train split (seeded random sample)"):
+        tbl = load_train_table(dset, a.max_train, a.seed)
         train_wafers, _, _ = wafers_from_rows(tbl.to_pylist(), max_tokens=a.max_tokens, rng=rng)
     with stage(log, f"load labeled eval ({a.eval_sampling} stratified sample)"):
         tbl = load_eval_table(dset, a.eval_cap, a.seed, balanced=a.eval_sampling == "balanced")

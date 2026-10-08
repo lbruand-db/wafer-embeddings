@@ -30,6 +30,7 @@ wafer-train = "wafer_embeddings.jobs.train:main"
 [dependency-groups]
 dev = [
     "black>=26.5.1",
+    "pyarrow", # exercises the train job's parquet sampling in tests
     "pytest>=8",
     "ty>=0.0.84",
 ]

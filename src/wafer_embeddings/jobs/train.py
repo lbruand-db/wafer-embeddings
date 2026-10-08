@@ -153,9 +153,13 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
         train_wafers, _, _ = wafers_from_rows(tbl.to_pylist(), max_tokens=a.max_tokens, rng=rng)
     with stage(log, f"load labeled eval ({a.eval_sampling} stratified sample)"):
         tbl = load_eval_table(dset, a.eval_cap, a.seed, balanced=a.eval_sampling == "balanced")
+        rows = tbl.to_pylist()
         eval_wafers, eval_labels, eval_splits = wafers_from_rows(
-            tbl.to_pylist(), max_tokens=a.max_tokens, rng=rng
+            rows, max_tokens=a.max_tokens, rng=rng
         )
+        # map shape = device proxy; per-map splits put one lot/device on both sides
+        eval_groups = np.array([f"{r['height']}x{r['width']}" for r in rows], dtype=object)
+        del rows
     q = np.isin(eval_splits, ["val", "test"])
     mix = dict(zip(*(v.tolist() for v in np.unique(eval_labels[q], return_counts=True))))
     log.info(f"train={len(train_wafers)} eval_labeled={len(eval_wafers)} query class mix={mix}")
@@ -181,7 +185,9 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
 
     def _eval(prefix: str) -> dict[str, float]:
         emb = embed_all(dino, eval_wafers, device=device)
-        m = g1_metrics(emb, eval_labels, eval_splits, N_CLASSES, class_names=CLASS_NAMES)
+        m = g1_metrics(
+            emb, eval_labels, eval_splits, N_CLASSES, class_names=CLASS_NAMES, groups=eval_groups
+        )
         m["effective_rank"] = effective_rank(emb)
         return {f"{prefix}{k}": v for k, v in m.items()}
 
@@ -191,7 +197,7 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
 
     def _select() -> float:
         emb = embed_all(dino, bank_wafers, device=device)
-        return selection_score(emb, eval_labels[bank], N_CLASSES)
+        return selection_score(emb, eval_labels[bank], N_CLASSES, groups=eval_groups[bank])
 
     def _monitor(step: int, stats: dict[str, float]) -> None:
         stats = {("dino_loss" if k == "loss" else k): v for k, v in stats.items()}
@@ -229,7 +235,14 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
             metrics = _eval("")
         mlflow.log_metrics(metrics)
         log.info(f"G1 metrics: {metrics}")
-        for k in ("knn_acc", "knn_macro_recall", "map@10", "cluster_nmi"):
+        for k in (
+            "knn_acc",
+            "knn_macro_recall",
+            "map@10",
+            "cluster_nmi",
+            "xgroup_knn_macro_recall",
+            "xgroup_precision@10",
+        ):
             log.info(f"{k}: untrained={baseline.get('untrained_' + k)} trained={metrics.get(k)}")
 
         path = "/tmp/wafer_encoder.pt"

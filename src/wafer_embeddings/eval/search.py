@@ -36,9 +36,17 @@ def weighted_knn_predict(
     query_emb: np.ndarray,
     k: int = 20,
     tau: float = 0.07,
+    exclude: np.ndarray | None = None,
 ) -> np.ndarray:
-    """DINO-style weighted kNN over single-label class ids (SPECS.md §8.3)."""
+    """DINO-style weighted kNN over single-label class ids (SPECS.md §8.3).
+
+    ``exclude`` is an optional (Q, N) bool mask of bank items a query may not use as
+    neighbours (e.g. same device/lot, to measure cross-group retrieval). Excluded items
+    get zero vote weight even if they land in the top ``k``.
+    """
     sims = query_emb @ train_emb.T
+    if exclude is not None:
+        sims = np.where(exclude, -np.inf, sims)
     k = min(k, train_emb.shape[0])
     nn = np.argpartition(-sims, kth=k - 1, axis=1)[:, :k]
     rows = np.arange(sims.shape[0])[:, None]

@@ -54,17 +54,23 @@ def stratified_indices(
     return np.sort(np.concatenate(picks)) if picks else np.zeros(0, dtype=np.int64)
 
 
-def selection_score(embeddings: np.ndarray, label_ids: np.ndarray, n_classes: int) -> float:
+def selection_score(
+    embeddings: np.ndarray,
+    label_ids: np.ndarray,
+    n_classes: int,
+    groups: np.ndarray | None = None,
+) -> float:
     """Checkpoint-selection score from labeled **train** maps only.
 
     Alternate items form a kNN bank and a query set; returns the queries' kNN macro
     recall. Choosing a checkpoint on the reported val/test queries would leak them into
-    the G1 numbers, so the selection set is drawn from the train split instead.
+    the G1 numbers, so the selection set is drawn from the train split instead. With
+    ``groups``, the cross-group recall is used, so selection can't reward a model for
+    recognizing the device instead of the defect.
     """
     half = np.where(np.arange(len(label_ids)) % 2 == 0, "train", "val").astype(object)
-    return g1_metrics(embeddings, np.asarray(label_ids), half, n_classes).get(
-        "knn_macro_recall", 0.0
-    )
+    m = g1_metrics(embeddings, np.asarray(label_ids), half, n_classes, groups=groups)
+    return m.get("xgroup_knn_macro_recall" if groups is not None else "knn_macro_recall", 0.0)
 
 
 def _one_hot(ids: np.ndarray, n_classes: int) -> np.ndarray:
@@ -80,11 +86,17 @@ def g1_metrics(
     n_classes: int,
     knn_k: int = 20,
     class_names: tuple[str, ...] | None = None,
+    groups: np.ndarray | None = None,
 ) -> dict[str, float]:
     """kNN-probe accuracy, clustering ARI/NMI, and retrieval mAP@k on labeled data.
 
     Also reports per-class kNN recall (``knn_recall_<class>``, SPECS.md §8 "report
     per-pattern") so rare-pattern failures aren't hidden by the averages.
+
+    ``groups`` (e.g. map shape as a device proxy) adds ``xgroup_*`` metrics in which a
+    query may not use same-group neighbours. Splits are per-map, so wafers from one
+    lot/device sit on both sides and share labels far more often than chance; the
+    cross-group numbers measure defect similarity without that shortcut.
     """
     labeled = label_ids >= 0
     tr = labeled & (splits == "train")
@@ -124,4 +136,20 @@ def g1_metrics(
         r = retrieval_metrics(embeddings[te], embeddings[te], oh, oh, ks=(1, 10), mode="exact")
         out["map@10"] = r["map@10"]
         out["recall@10"] = r["recall@10"]
+
+    if groups is not None and tr.sum() > 0 and te.sum() > 1:
+        groups = np.asarray(groups, dtype=object)
+        yq, gq, eq = label_ids[te], groups[te], embeddings[te]
+        excl = gq[:, None] == groups[tr][None, :]
+        pred = weighted_knn_predict(embeddings[tr], label_ids[tr], eq, k=knn_k, exclude=excl)
+        out["xgroup_knn_acc"] = float((pred == yq).mean())
+        out["xgroup_knn_macro_recall"] = float(
+            np.mean([(pred[yq == c] == c).mean() for c in np.unique(yq)])
+        )
+        # precision@10 among the queries, same-group items (and self) excluded
+        sims = np.where(gq[:, None] == gq[None, :], -np.inf, eq @ eq.T)
+        top = np.argsort(-sims, axis=1)[:, :10]
+        valid = np.isfinite(np.take_along_axis(sims, top, axis=1))
+        hit = (yq[top] == yq[:, None]) & valid
+        out["xgroup_precision@10"] = float((hit.sum(1) / np.maximum(valid.sum(1), 1)).mean())
     return out

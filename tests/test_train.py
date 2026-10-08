@@ -251,3 +251,39 @@ def test_selection_score_uses_only_given_maps():
     labels = np.array([0, 0, 1, 1, 2, 2] * 3)
     emb = np.eye(3)[labels].astype(np.float64)
     assert selection_score(emb, labels, n_classes=3) == 1.0
+
+
+def test_g1_xgroup_metrics_remove_the_same_group_shortcut():
+    # embeddings encode only the group; labels follow the group except across groups.
+    # Group A: label 0 in bank and queries; group B: label 1. A "group detector" scores
+    # perfectly on plain kNN but has no cross-group signal.
+    groups = np.array(["A"] * 4 + ["B"] * 4 + ["A"] * 2 + ["B"] * 2, dtype=object)
+    labels = np.array([0] * 4 + [1] * 4 + [0] * 2 + [1] * 2)
+    splits = np.array(["train"] * 8 + ["test"] * 4, dtype=object)
+    emb = np.array([[1.0, 0.0] if g == "A" else [0.0, 1.0] for g in groups])
+    m = g1_metrics(emb, labels, splits, n_classes=2, knn_k=3, groups=groups)
+    assert m["knn_acc"] == 1.0
+    assert m["xgroup_knn_acc"] == 0.0  # only other-group neighbours -> always wrong
+    assert m["xgroup_precision@10"] == 0.0
+
+
+def test_g1_xgroup_metrics_keep_real_defect_signal():
+    # embeddings encode the label; groups are unrelated -> cross-group stays perfect
+    labels = np.array([0, 1, 0, 1] * 2 + [0, 1, 0, 1])
+    groups = np.array(["A", "A", "B", "B"] * 3, dtype=object)
+    splits = np.array(["train"] * 8 + ["test"] * 4, dtype=object)
+    emb = np.eye(2)[labels].astype(np.float64)
+    m = g1_metrics(emb, labels, splits, n_classes=2, knn_k=3, groups=groups)
+    assert m["xgroup_knn_acc"] == 1.0 and m["xgroup_knn_macro_recall"] == 1.0
+    # each query has only 2 cross-group queries (one per label) -> 1 of 2 is a hit
+    assert m["xgroup_precision@10"] == 0.5
+
+
+def test_selection_score_with_groups_ignores_the_group_shortcut():
+    from wafer_embeddings.train import selection_score
+
+    groups = np.array(["A", "A", "B", "B"] * 4, dtype=object)
+    labels = np.array([0, 0, 1, 1] * 4)  # label == group
+    emb = np.array([[1.0, 0.0] if g == "A" else [0.0, 1.0] for g in groups])
+    assert selection_score(emb, labels, n_classes=2) == 1.0
+    assert selection_score(emb, labels, n_classes=2, groups=groups) == 0.0

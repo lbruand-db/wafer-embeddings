@@ -78,8 +78,14 @@ def train_step(
     rng: np.random.Generator,
     orientation_invariant: bool = True,
     device: str = "cpu",
+    freeze_last: bool = False,
 ) -> float:
-    """One DINO optimization step over a batch of tokenized wafers."""
+    """One DINO optimization step over a batch of tokenized wafers.
+
+    ``freeze_last`` zeros the prototype (last-layer) gradient this step — DINO's
+    early-training stabilizer (ref [1]): without it, real-data training is unstable and
+    oscillates in and out of the uniform collapse.
+    """
     views = build_views(wafers, rng, n_views=2, orientation_invariant=orientation_invariant)
     views = _to_device(views, device)
     student = dino.student_views(views)
@@ -87,6 +93,10 @@ def train_step(
     loss = loss_fn(student, teacher)
     optimizer.zero_grad()
     loss.backward()
+    if freeze_last:
+        proto = getattr(getattr(dino, "student_head", None), "prototypes", None)
+        if proto is not None:
+            proto.weight.grad = None
     optimizer.step()
     dino.update_teacher()
     return float(loss.detach())
@@ -112,17 +122,22 @@ def fit_dino(
     base_lr: float | None = None,
     lr_min: float = 1e-6,
     warmup_frac: float = 0.1,
-    teacher_temp: tuple[float, float] = (0.04, 0.07),
+    teacher_temp: tuple[float, float] = (0.04, 0.04),
     teacher_temp_warmup_frac: float = 0.3,
     momentum: tuple[float, float] = (0.996, 1.0),
+    freeze_last_frac: float = 0.1,
     log: Callable[[str], None] | None = None,
     log_every: int = 50,
 ) -> list[float]:
     """Run ``steps`` DINO steps with LR / teacher-temp / momentum schedules (ref [1]).
 
     LR: linear warmup 0->base_lr over ``warmup_frac``, then cosine to ``lr_min``.
-    Teacher temp: linear warmup over ``teacher_temp_warmup_frac``, then held.
+    Teacher temp: linear warmup over ``teacher_temp_warmup_frac``, then held. Default is a
+    constant 0.04 — on real WM-811K a warmup to 0.07 left the teacher too soft to sharpen
+    the small cosine-logit spread, pinning the loss at ln(out_dim) (uniform collapse).
     Teacher EMA momentum: cosine from ``momentum[0]`` to ``momentum[1]``.
+    ``freeze_last_frac``: freeze the prototype layer for the first fraction of steps
+    (DINO's stabilizer; prevents the early collapse-and-oscillate on real data).
     """
     n = len(wafers)
     bs = min(batch_size, n)
@@ -130,6 +145,7 @@ def fit_dino(
         base_lr = optimizer.param_groups[0]["lr"]
     warmup = max(int(steps * warmup_frac), 1)
     tt_warmup = max(int(steps * teacher_temp_warmup_frac), 1)
+    freeze_steps = int(steps * freeze_last_frac)
     tt0, tt1 = teacher_temp
     m0, m1 = momentum
     losses: list[float] = []
@@ -154,6 +170,7 @@ def fit_dino(
             rng,
             orientation_invariant=orientation_invariant,
             device=device,
+            freeze_last=step <= freeze_steps,
         )
         losses.append(loss)
         if log is not None and (step % log_every == 0 or step == steps):

@@ -52,6 +52,7 @@ env_variables:
   BATCH_SIZE: "64"
   DEPTH: "12"
   MAX_TOKENS: "4096"
+  LR: "5e-4"
   # ISAB (O(N*m)) is the default: WM-811K has large variable-size maps for which
   # full O(N^2) attention OOMs an A10 (SPECS.md §4 / de-risking R3).
   ATTENTION: "isab"
@@ -61,4 +62,4 @@ command: |
     --catalog mmf_mlops_demo_catalog --schema wafer_embeddings \
     --max-train "$MAX_TRAIN" --eval-cap "$EVAL_CAP" --steps "$STEPS" \
     --batch-size "$BATCH_SIZE" --attention "$ATTENTION" \
-    --depth "$DEPTH" --max-tokens "$MAX_TOKENS"
+    --depth "$DEPTH" --max-tokens "$MAX_TOKENS" --lr "$LR"

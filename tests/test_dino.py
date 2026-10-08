@@ -100,6 +100,26 @@ def test_embed_is_normalized_384_default():
     assert torch.allclose(emb.norm(dim=-1), torch.ones(2), atol=1e-5)
 
 
+def test_freeze_last_holds_prototypes_fixed():
+    # DINO stabilizer: with freeze_last=True the prototype layer must not move, while the
+    # encoder still updates; without it, prototypes move.
+    rng = np.random.default_rng(0)
+    wafers = [_disk(i) for i in range(4)]
+    for freeze in (True, False):
+        dino = _tiny_dino()
+        loss_fn = DINOLoss(out_dim=128)
+        opt = torch.optim.SGD(
+            list(dino.student_enc.parameters()) + list(dino.student_head.parameters()), lr=0.5
+        )
+        proto_before = dino.student_head.prototypes.weight.clone()
+        enc_before = next(iter(dino.student_enc.parameters())).clone()
+        train_step(dino, loss_fn, opt, wafers, rng, freeze_last=freeze)
+        proto_moved = not torch.allclose(proto_before, dino.student_head.prototypes.weight)
+        enc_moved = not torch.allclose(enc_before, next(iter(dino.student_enc.parameters())))
+        assert proto_moved == (not freeze)  # frozen -> unchanged; unfrozen -> changed
+        assert enc_moved  # encoder always trains
+
+
 def test_multi_step_training_stays_finite():
     dino = _tiny_dino()
     loss_fn = DINOLoss(out_dim=128)

@@ -47,6 +47,13 @@ def _args(argv=None):
     p.add_argument("--attention", default="full", choices=["full", "isab"])
     p.add_argument("--out-dim", type=int, default=1024, help="DINO prototype count.")
     p.add_argument("--lr", type=float, default=5e-4)
+    p.add_argument("--weight-decay", type=float, default=0.0, help="AdamW weight decay (0 = off).")
+    p.add_argument(
+        "--freeze-last-frac",
+        type=float,
+        default=0.1,
+        help="Freeze the DINO prototype layer for this fraction of steps (stabilizer).",
+    )
     p.add_argument("--seed", type=int, default=0)
     return p.parse_args(argv)
 
@@ -94,7 +101,9 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
     dino = DinoModel(encoder, DINOHead(a.embed_dim, out_dim=a.out_dim)).to(device)
     loss_fn = DINOLoss(out_dim=a.out_dim).to(device)
     opt = torch.optim.AdamW(
-        list(dino.student_enc.parameters()) + list(dino.student_head.parameters()), lr=a.lr
+        list(dino.student_enc.parameters()) + list(dino.student_head.parameters()),
+        lr=a.lr,
+        weight_decay=a.weight_decay,
     )
 
     if a.experiment:
@@ -111,6 +120,7 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
                 batch_size=a.batch_size,
                 rng=rng,
                 device=device,
+                freeze_last_frac=a.freeze_last_frac,
                 log=log.info,
                 log_every=50,
             )

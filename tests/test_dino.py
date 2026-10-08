@@ -2,6 +2,7 @@ from typing import cast
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 
 from wafer_embeddings.data.mixedwm38 import FAIL, NO_DIE, PASS
 from wafer_embeddings.model.dino import DinoModel, DINOHead, DINOLoss
@@ -42,6 +43,24 @@ def test_head_logits_are_cosine_and_non_degenerate():
     assert torch.isfinite(out).all()
     assert out.abs().max() <= 1.0 + 1e-4  # bounded cosine
     assert (out.max(dim=1).values - out.min(dim=1).values).min() > 0.1  # not uniform
+
+
+def test_default_head_logits_are_sharpenable_not_uniform():
+    # Regression guard for the uniform collapse: the DEFAULT head must emit cosine logits
+    # with enough per-sample spread (~1/sqrt(bottleneck)) that the teacher temperature can
+    # sharpen them into a non-uniform target. bottleneck=256 gave spread ~0.06 (too flat →
+    # teacher stays uniform → loss pinned at ln K); the default dropped to 64 (~0.125).
+    torch.manual_seed(0)
+    out_dim = 1024
+    head = DINOHead(48, out_dim=out_dim)  # defaults (bottleneck=64)
+    x = F.normalize(torch.randn(64, 48), dim=-1)
+    logits = head(x)
+    assert logits.abs().max() <= 1.0 + 1e-4  # cosine
+    per_sample_std = logits.std(dim=-1).mean().item()
+    assert per_sample_std > 0.09, per_sample_std  # 64 -> ~0.125; 256 would be ~0.06
+    # teacher sharpening (temp 0.04, no centering yet) must beat uniform by a wide margin
+    teacher = F.softmax(logits / 0.04, dim=-1)
+    assert teacher.max(dim=-1).values.mean().item() > 20.0 / out_dim
 
 
 def test_loss_nonnegative_and_center_moves():

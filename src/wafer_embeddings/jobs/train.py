@@ -45,7 +45,7 @@ def _args(argv=None):
     p.add_argument("--depth", type=int, default=12)
     p.add_argument("--heads", type=int, default=6)
     p.add_argument("--attention", default="full", choices=["full", "isab"])
-    p.add_argument("--out-dim", type=int, default=4096, help="DINO prototype count.")
+    p.add_argument("--out-dim", type=int, default=1024, help="DINO prototype count.")
     p.add_argument("--lr", type=float, default=5e-4)
     p.add_argument("--seed", type=int, default=0)
     return p.parse_args(argv)

@@ -21,14 +21,23 @@ class DINOHead(nn.Module):
     so logits are cosine similarities in [-1, 1] (equivalent to DINO's weight-norm
     with the magnitude frozen at 1). A plain Linear here leaves logits ~0 and the loss
     pinned at ln(out_dim) — the uniform collapse we observed (ref [1]).
+
+    ``bottleneck`` is deliberately small (64, not DINO's 256). Cosine logits across the
+    prototypes have per-sample spread ~1/sqrt(bottleneck); at 256 that is ~0.06, too flat
+    for the teacher temperature (0.04) to sharpen, so centering keeps the teacher target
+    uniform and training is stuck on the uniform saddle (loss == ln(out_dim), effective
+    collapse). Dropping the bottleneck to 64 raises the spread to ~0.125, which is enough
+    for the teacher to sharpen and break the symmetry. Verified on CPU: bottleneck 256
+    stays pinned at ln(K) with ~chance retrieval, while 64 reaches ~0.94 1-NN on a
+    4-pattern synthetic set (see scratch/dino_debug.py).
     """
 
     def __init__(
         self,
         in_dim: int,
-        out_dim: int = 4096,
+        out_dim: int = 1024,
         hidden: int = 2048,
-        bottleneck: int = 256,
+        bottleneck: int = 64,
         n_layers: int = 3,
     ):
         super().__init__()

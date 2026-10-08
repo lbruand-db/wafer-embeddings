@@ -64,3 +64,10 @@ def test_parse_records_skips_or_raises_on_invalid():
     assert len(parsed.maps) == 1  # only the good map survives
     with pytest.raises(ValueError):
         wm.parse_records([bad_val], ["Center"], skip_invalid=False)
+
+
+def test_parse_records_carries_lots():
+    maps = [np.full((4, 4), 1, dtype=np.uint8) * (i % 2 + 1) for i in range(2)]
+    parsed = wm.parse_records(maps, ["Center", "Loc"], lots=["lotA", "lotB"])
+    assert parsed.lots == ["lotA", "lotB"]
+    assert wm.parse_records(maps, ["Center", "Loc"]).lots == [None, None]

@@ -61,6 +61,30 @@ def split_for(
     return "test"
 
 
+def split_for_key(
+    key: str,
+    fractions: tuple[float, float, float] = (0.8, 0.1, 0.1),
+    salt: str = "wafer-embeddings/v1",
+) -> str:
+    """Assign a whole group (e.g. a lot) to 'train'/'val'/'test' by salted key hash.
+
+    Every map sharing ``key`` lands in the same split. Use this when maps within a group
+    are correlated (same lot -> same device and often the same defect), which per-map
+    splits would leak across the boundary.
+    """
+    if not np.isclose(sum(fractions), 1.0):
+        raise ValueError(f"fractions must sum to 1.0, got {fractions}")
+    train_f, val_f, _ = fractions
+    h = hashlib.sha1(salt.encode())
+    h.update(b"key:" + key.encode())
+    u = int(h.hexdigest()[:8], 16) / 0x100000000
+    if u < train_f:
+        return "train"
+    if u < train_f + val_f:
+        return "val"
+    return "test"
+
+
 def split_assignments(
     maps,
     fractions: tuple[float, float, float] = (0.8, 0.1, 0.1),

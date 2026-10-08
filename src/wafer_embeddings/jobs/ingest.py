@@ -35,6 +35,7 @@ def record_to_row(rec: wm.Record, row_id: int) -> dict:
         "label": rec.label_name,  # None for unlabeled
         "label_id": int(rec.label_id),  # -1 for unlabeled
         "split": rec.split,
+        "lot": rec.lot,  # None if unknown
     }
 
 
@@ -78,6 +79,7 @@ def _delta_schema():  # pragma: no cover - needs pyspark
             StructField("label", StringType(), True),
             StructField("label_id", IntegerType(), False),
             StructField("split", StringType(), False),
+            StructField("lot", StringType(), True),
         ]
     )
 
@@ -125,7 +127,13 @@ def main(argv: list[str] | None = None) -> None:  # pragma: no cover - needs Spa
     mode = "overwrite"
     prog = periodic(log.info, "scan")
     with stage(log, f"stream -> {fqn}"):
-        records = wm.iter_records(df["waferMap"], df["failureType"], seen=seen, progress=prog)
+        # Lot-grouped splits: one lot = one device, often one defect, so a per-map split
+        # would put near-identical wafers on both sides of the eval boundary.
+        if "lotName" not in df.columns:
+            raise RuntimeError(f"LSWMD.pkl has no lotName column; columns={list(df.columns)}")
+        records = wm.iter_records(
+            df["waferMap"], df["failureType"], seen=seen, progress=prog, lots=df["lotName"]
+        )
         for rec in records:
             chunk.append(record_to_row(rec, row_id))
             row_id += 1
@@ -140,6 +148,17 @@ def main(argv: list[str] | None = None) -> None:  # pragma: no cover - needs Spa
             flush(chunk, mode)
             written += len(chunk)
     log.info(f"wrote {written} rows ({labeled} labeled) to {fqn}")
+    split_lots = spark.sql(
+        f"SELECT split, count(*) AS n, count(DISTINCT lot) AS lots, "
+        f"count_if(label_id >= 0) AS labeled FROM {fqn} GROUP BY split ORDER BY split"
+    ).collect()
+    log.info(f"lot-grouped splits: {[r.asDict() for r in split_lots]}")
+    straddle = spark.sql(
+        f"SELECT count(*) AS n FROM (SELECT lot FROM {fqn} WHERE lot IS NOT NULL "
+        f"GROUP BY lot HAVING count(DISTINCT split) > 1)"
+    ).collect()[0]["n"]
+    if straddle:
+        raise RuntimeError(f"{straddle} lots straddle splits; lot-grouped split is broken")
 
     # Parquet export to the volume: AI Runtime serverless GPU has no Spark, so the
     # training job reads these files directly (SPECS.md §11.3).

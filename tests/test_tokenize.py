@@ -139,3 +139,45 @@ def test_random_view_both_modes_valid():
         assert v.coords.shape[0] == v.state_ids.shape[0]
         assert v.n_tokens <= t.n_tokens  # crop/cutout only remove
         assert np.isfinite(v.coords).all()
+
+
+def test_fail_dropout_only_turns_fails_to_pass_at_rate():
+    rng = np.random.default_rng(0)
+    s = np.array([tk.STATE_FAIL] * 5000 + [tk.STATE_PASS] * 5000)
+    out = aug.fail_dropout(s, 0.4, rng)
+    assert np.all(out[5000:] == tk.STATE_PASS)  # PASS dies never become FAIL
+    kept = float((out[:5000] == tk.STATE_FAIL).mean())
+    assert abs(kept - 0.6) < 0.03
+    assert np.array_equal(aug.fail_dropout(s, 0.0, rng), s)
+
+
+def test_token_dropout_subset_rate_and_never_empty():
+    rng = np.random.default_rng(1)
+    coords = rng.random((4000, 3)).astype(np.float32)
+    states = rng.integers(0, 2, 4000)
+    c, s = aug.token_dropout(coords, states, 0.5, rng)
+    assert abs(len(c) / 4000 - 0.5) < 0.03
+    rows = {tuple(r) for r in coords.tolist()}
+    assert all(tuple(r) in rows for r in c.tolist())  # kept dies keep their positions
+    c1, _ = aug.token_dropout(coords[:1], states[:1], 0.999999, rng)
+    assert len(c1) == 1
+
+
+def test_random_view_with_strong_aug_differs_more_between_views():
+    m, _, _ = _disk(31, 31, seed=2)  # ~20% FAIL dies
+    w = tk.tokenize(m)
+    rng = np.random.default_rng(3)
+    base = aug.random_view(w, rng, orientation_invariant=False, crop_scale=1.0, cutout_regions=0)
+    strong = aug.random_view(
+        w,
+        rng,
+        orientation_invariant=False,
+        crop_scale=1.0,
+        cutout_regions=0,
+        token_drop_p=0.5,
+        fail_drop_p=0.5,
+    )
+    n_fail = int((w.state_ids == tk.STATE_FAIL).sum())
+    assert base.n_tokens == w.n_tokens
+    assert strong.n_tokens < 0.6 * w.n_tokens
+    assert int((strong.state_ids == tk.STATE_FAIL).sum()) < 0.4 * n_fail

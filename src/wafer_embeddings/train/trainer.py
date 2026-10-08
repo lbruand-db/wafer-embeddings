@@ -54,19 +54,23 @@ def build_views(
     n_views: int = 2,
     orientation_invariant: bool = True,
     crop_scale: float = 0.9,
+    **aug,
 ) -> list[tuple]:
     """Make ``n_views`` augmented, collated views of a batch of wafers.
 
     Each view is a ``(coords, state_ids, mask)`` tensor triple (DINO multi-crop; the
-    crops double as the variable-size training signal, SPECS.md §5).
+    crops double as the variable-size training signal, SPECS.md §5). Extra keyword
+    arguments (e.g. ``token_drop_p``, ``fail_drop_p``) go to ``random_view``.
     """
     views = []
     for _ in range(n_views):
-        aug = [
-            random_view(w, rng, orientation_invariant=orientation_invariant, crop_scale=crop_scale)
+        batch = [
+            random_view(
+                w, rng, orientation_invariant=orientation_invariant, crop_scale=crop_scale, **aug
+            )
             for w in wafers
         ]
-        views.append(collate(aug))
+        views.append(collate(batch))
     return views
 
 
@@ -107,6 +111,7 @@ def train_step(
     freeze_last: bool = False,
     clip_grad: float | None = None,
     stats: dict[str, float] | None = None,
+    aug: dict | None = None,
 ) -> float:
     """One DINO optimization step over a batch of tokenized wafers.
 
@@ -115,11 +120,13 @@ def train_step(
     oscillates in and out of the uniform collapse. ``clip_grad`` clips the global grad
     norm (DINO uses 3.0). If ``stats`` is given, it is filled with ``collapse_stats`` and
     the pre-clip ``grad_norm`` (costs one extra no-grad encoder pass, so only ask on log
-    steps).
+    steps). ``aug`` holds extra ``random_view`` keyword arguments (augmentation knobs).
     """
     import torch
 
-    views = build_views(wafers, rng, n_views=2, orientation_invariant=orientation_invariant)
+    views = build_views(
+        wafers, rng, n_views=2, orientation_invariant=orientation_invariant, **(aug or {})
+    )
     views = _to_device(views, device)
     student = dino.student_views(views)
     teacher = dino.teacher_views(views)
@@ -169,6 +176,7 @@ def fit_dino(
     momentum: tuple[float, float] = (0.996, 1.0),
     freeze_last_frac: float = 0.1,
     clip_grad: float | None = None,
+    aug: dict | None = None,
     log: Callable[[str], None] | None = None,
     log_every: int = 50,
     monitor: Callable[[int, dict[str, float]], None] | None = None,
@@ -184,7 +192,8 @@ def fit_dino(
     Teacher EMA momentum: cosine from ``momentum[0]`` to ``momentum[1]``.
     ``freeze_last_frac``: freeze the prototype layer for the first fraction of steps
     (DINO's stabilizer; prevents the early collapse-and-oscillate on real data).
-    ``clip_grad``: global grad-norm clip (None = off).
+    ``clip_grad``: global grad-norm clip (None = off). ``aug``: extra ``random_view``
+    keyword arguments, e.g. ``{"token_drop_p": 0.5, "fail_drop_p": 0.4}``.
 
     Every ``log_every`` steps, ``collapse_stats`` + grad norm are computed and passed to
     ``monitor(step, stats)`` and the ``log`` line. If ``select_fn`` is given (higher =
@@ -242,6 +251,7 @@ def fit_dino(
             freeze_last=step <= freeze_steps,
             clip_grad=clip_grad,
             stats=stats,
+            aug=aug,
         )
         losses.append(loss)
         if stats is not None:

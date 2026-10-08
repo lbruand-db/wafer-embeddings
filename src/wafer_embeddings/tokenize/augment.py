@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from wafer_embeddings.tokenize.tokenizer import TokenizedWafer
+from wafer_embeddings.tokenize.tokenizer import STATE_FAIL, STATE_PASS, TokenizedWafer
 
 
 def rotate_coords(coords: np.ndarray, angle: float) -> np.ndarray:
@@ -38,6 +38,36 @@ def toggle_die_noise(state_ids: np.ndarray, p: float, rng: np.random.Generator) 
     out = state_ids.copy()
     out[flip] = 1 - out[flip]  # two states: pass<->fail
     return out
+
+
+def fail_dropout(state_ids: np.ndarray, p: float, rng: np.random.Generator) -> np.ndarray:
+    """Turn each FAIL die back to PASS with probability ``p``.
+
+    Thins the defect while keeping its spatial pattern (a Center blob stays a Center
+    blob), so two views no longer share the exact set of failing dies, which would let
+    DINO match views by wafer identity instead of by defect pattern.
+    """
+    if p <= 0:
+        return state_ids.copy()
+    out = state_ids.copy()
+    out[(out == STATE_FAIL) & (rng.random(out.shape) < p)] = STATE_PASS
+    return out
+
+
+def token_dropout(
+    coords: np.ndarray, state_ids: np.ndarray, p: float, rng: np.random.Generator
+) -> tuple[np.ndarray, np.ndarray]:
+    """Drop each die token with probability ``p`` (never all of them).
+
+    Positions of the kept dies are unchanged, so patterns survive while the exact die
+    layout differs between views.
+    """
+    if p <= 0 or coords.shape[0] == 0:
+        return coords.copy(), state_ids.copy()
+    keep = rng.random(coords.shape[0]) >= p
+    if not keep.any():
+        keep[rng.integers(coords.shape[0])] = True
+    return coords[keep].copy(), state_ids[keep].copy()
 
 
 def crop_window(
@@ -98,11 +128,14 @@ def random_view(
     die_noise_p: float = 0.005,
     cutout_regions: int = 2,
     cutout_size: float = 0.3,
+    token_drop_p: float = 0.0,
+    fail_drop_p: float = 0.0,
 ) -> TokenizedWafer:
     """Compose one augmented DINO view (SPECS.md §5).
 
     Rotation/flip are applied only in orientation-invariant mode. Crop + die-noise +
-    cutout always apply. We deliberately do not chain crop with a coordinate shift
+    cutout always apply; ``token_drop_p`` / ``fail_drop_p`` (off by default) add token
+    dropout and FAIL thinning. We deliberately do not chain crop with a coordinate shift
     (crop+shift degraded in WaPIRL, SPECS.md §5).
     """
     coords, state_ids = wafer.coords, wafer.state_ids
@@ -114,5 +147,7 @@ def random_view(
         if rng.random() < 0.5:
             coords = flip_coords(coords, "v")
     coords, state_ids = cutout(coords, state_ids, cutout_regions, cutout_size, rng)
+    coords, state_ids = token_dropout(coords, state_ids, token_drop_p, rng)
+    state_ids = fail_dropout(state_ids, fail_drop_p, rng)
     state_ids = toggle_die_noise(state_ids, die_noise_p, rng)
     return TokenizedWafer(coords.astype(np.float32), state_ids)

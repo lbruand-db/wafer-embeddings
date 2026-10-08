@@ -27,7 +27,7 @@ def _args(argv=None):
     p.add_argument("--catalog", required=True)
     p.add_argument("--schema", required=True)
     p.add_argument("--table", default="wafer_maps")
-    p.add_argument("--experiment", default="/Shared/wafer-embeddings")
+    p.add_argument("--experiment", default=None, help="MLflow experiment (default: AI Runtime's).")
     p.add_argument("--max-train", type=int, default=50000, help="Train maps to sample (0=all).")
     p.add_argument("--eval-cap", type=int, default=20000, help="Labeled maps for eval.")
     p.add_argument("--steps", type=int, default=2000)
@@ -84,7 +84,8 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
         list(dino.student_enc.parameters()) + list(dino.student_head.parameters()), lr=a.lr
     )
 
-    mlflow.set_experiment(a.experiment)
+    if a.experiment:
+        mlflow.set_experiment(a.experiment)
     with mlflow.start_run(run_name="dino-g1"):
         mlflow.log_params(vars(a) | {"device": device, "n_classes": N_CLASSES})
         with stage(log, "train DINO"):

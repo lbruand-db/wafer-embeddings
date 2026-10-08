@@ -1,38 +1,46 @@
 # Databricks AI Runtime serverless-GPU training workload (SPECS.md §4/§7/§11.3).
 #
-# AI Runtime is launched via its own CLI/YAML (or notebook) — it is NOT a Databricks
-# Asset Bundle resource, so this lives outside databricks.yml and is invoked separately
-# (the DAB owns ingest/bootstrap; this owns training).
+# Launched with:  databricks air run --file ai_runtime/train.yaml --profile mmf
+# Validate first: databricks air run --file ai_runtime/train.yaml --dry-run --profile mmf
+# Smoke test:     ... --override env_variables.STEPS=100 \
+#                     --override env_variables.MAX_TRAIN=3000 \
+#                     --override env_variables.EVAL_CAP=2000
 #
-# !! Public Preview — VERIFY the exact field names + launch command against the current
-#    docs before running: https://docs.databricks.com/aws/en/machine-learning/ai-runtime/
-#    (and .../ai-runtime/cli/yaml-config). Treat this as a starting point, not gospel.
-#
-# Prereq: build + upload the wheel so the environment can install it, e.g.
-#   uv build --wheel
-#   databricks fs cp dist/wafer_embeddings-0.1.0-py3-none-any.whl \
-#     dbfs:/Volumes/mmf_mlops_demo_catalog/wafer_embeddings/raw/dist/ --profile mmf
+# AI Runtime is Public Preview and these commands are "under active development"
+# (databricks air). Schema introspected from `databricks air run -h config`.
 
-name: wafer-embeddings-dino-g1
-experiment_name: /Shared/wafer-embeddings
+experiment_name: wafer-embeddings
+mlflow_experiment_directory: /Workspace/Users/lucas.bruand@databricks.com
+mlflow_run_name: dino-g1
 
-# ViT-S/DINO on ~2k-token WM-811K maps is small — a single A10 is right-sized (§4).
-compute: GPU_1xA10
+compute:
+  accelerator_type: GPU_1xA10
+  num_accelerators: 1
 
 environment:
+  version: "6" # AI Runtime GPU image (ships PyTorch/CUDA); torch not reinstalled
   dependencies:
-    - torch
     - scikit-learn
     - mlflow
-    - /Volumes/mmf_mlops_demo_catalog/wafer_embeddings/raw/dist/wafer_embeddings-0.1.0-py3-none-any.whl
 
-# Entry point from pyproject [project.scripts]; runs the tested train package.
-command: >-
-  wafer-train
-  --catalog mmf_mlops_demo_catalog
-  --schema wafer_embeddings
-  --max-train 50000
-  --eval-cap 20000
-  --steps 2000
-  --batch-size 128
-  --attention full
+# Upload the local source tree so the run can import wafer_embeddings via PYTHONPATH
+# (no wheel build/upload needed; torch comes from the image).
+code_source:
+  type: snapshot
+  snapshot:
+    root_path: .
+    remote_volume: /Volumes/mmf_mlops_demo_catalog/wafer_embeddings/raw
+    include_paths:
+      - src
+
+# Overridable sizes (see --override above); defaults are the full Gate-G1 run.
+env_variables:
+  MAX_TRAIN: "50000"
+  EVAL_CAP: "20000"
+  STEPS: "2000"
+
+command: |
+  PYTHONPATH=src python -m wafer_embeddings.jobs.train \
+    --catalog mmf_mlops_demo_catalog --schema wafer_embeddings \
+    --max-train "$MAX_TRAIN" --eval-cap "$EVAL_CAP" --steps "$STEPS" \
+    --batch-size 128 --attention full

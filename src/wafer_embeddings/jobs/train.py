@@ -1,7 +1,8 @@
 """DINO pretraining + Gate-G1 eval on WM-811K (SPECS.md §4/§7/§8, PLAN P1).
 
-Runs on AI Runtime serverless GPU. Loads the ingested Delta table, pretrains the
-per-die ViT with DINO (full attention for the ~2k-token WM-811K maps), embeds the
+Runs on AI Runtime serverless GPU (no Spark session), so it reads the parquet export
+from the UC volume. Pretrains the per-die ViT with DINO (ISAB attention by default:
+WM-811K maps vary widely in size, so dies are token-capped — SPECS.md §4), embeds the
 labeled subset with exact search, logs loss / collapse / G1 metrics to MLflow, and
 saves the encoder weights as an artifact. UC registration + serving are later (P3/P4).
 

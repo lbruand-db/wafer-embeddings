@@ -2,9 +2,12 @@
 #
 # Launched with:  databricks air run --file ai_runtime/train.yaml --profile mmf
 # Validate first: databricks air run --file ai_runtime/train.yaml --dry-run --profile mmf
-# Smoke test:     ... --override env_variables.STEPS=100 \
-#                     --override env_variables.MAX_TRAIN=3000 \
-#                     --override env_variables.EVAL_CAP=2000
+# Smoke test:     ... --override env_variables.STEPS=50 \
+#                     --override env_variables.MAX_TRAIN=2000 \
+#                     --override env_variables.EVAL_CAP=1500 \
+#                     --override env_variables.BATCH_SIZE=8 \
+#                     --override env_variables.DEPTH=4 \
+#                     --override env_variables.MAX_TOKENS=1024
 #
 # Local code is shipped the documented way: code_source.snapshot uploads ./src and
 # exposes it to the command via $CODE_SOURCE_PATH (no wheel/volume install).
@@ -39,7 +42,8 @@ code_source:
     root_path: ../src
     remote_volume: /Volumes/mmf_mlops_demo_catalog/wafer_embeddings/raw
 
-# Overridable sizes (see --override above); defaults are the full Gate-G1 run.
+# Overridable knobs (see --override above); the numeric defaults mirror the argparse
+# defaults in jobs/train.py (full Gate-G1 run). Keep the two in sync when changing them.
 env_variables:
   PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True # reduce CUDA fragmentation
   MAX_TRAIN: "50000"

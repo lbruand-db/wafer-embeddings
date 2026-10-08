@@ -12,22 +12,30 @@ from typing import Callable
 import numpy as np
 
 from wafer_embeddings.tokenize.augment import random_view
-from wafer_embeddings.tokenize.tokenizer import TokenizedWafer, collate, tokenize
+from wafer_embeddings.tokenize.tokenizer import TokenizedWafer, cap_tokens, collate, tokenize
 
 
-def wafers_from_rows(rows) -> tuple[list[TokenizedWafer], np.ndarray, np.ndarray]:
-    """Reconstruct + tokenize wafers from Delta row dicts.
+def wafers_from_rows(
+    rows, max_tokens: int | None = None, rng: np.random.Generator | None = None
+) -> tuple[list[TokenizedWafer], np.ndarray, np.ndarray]:
+    """Reconstruct + tokenize wafers from Delta/parquet row dicts.
 
     Each row has a flattened ``wafer_map`` plus ``height``/``width``; returns the
-    tokenized wafers alongside aligned ``label_id`` and ``split`` arrays.
+    tokenized wafers alongside aligned ``label_id`` and ``split`` arrays. ``max_tokens``
+    caps giant wafers (bounds GPU memory, SPECS.md §4).
     """
+    if rng is None:
+        rng = np.random.default_rng(0)
     wafers: list[TokenizedWafer] = []
     labels: list[int] = []
     splits: list[str] = []
     for r in rows:
         h, w = int(r["height"]), int(r["width"])
         m = np.asarray(r["wafer_map"], dtype=np.uint8).reshape(h, w)
-        wafers.append(tokenize(m))
+        tw = tokenize(m)
+        if max_tokens:
+            tw = cap_tokens(tw, max_tokens, rng)
+        wafers.append(tw)
         labels.append(int(r["label_id"]))
         splits.append(str(r["split"]))
     return wafers, np.array(labels, dtype=np.int64), np.array(splits, dtype=object)

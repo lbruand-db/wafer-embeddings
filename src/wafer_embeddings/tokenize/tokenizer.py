@@ -49,6 +49,19 @@ def tokenize(wafer_map: np.ndarray, eps: float = 1e-6) -> TokenizedWafer:
     return TokenizedWafer(coords, state_ids)
 
 
+def cap_tokens(w: TokenizedWafer, max_tokens: int, rng: np.random.Generator) -> TokenizedWafer:
+    """Randomly subsample dies down to ``max_tokens`` (bounds memory on huge wafers).
+
+    WM-811K maps vary from tiny to tens of thousands of dies; capping keeps the
+    attention/activation tensors bounded. It's a token-space crop, consistent with the
+    augmentation philosophy (SPECS.md §5); positions/states of kept dies are unchanged.
+    """
+    if w.n_tokens <= max_tokens:
+        return w
+    idx = np.sort(rng.choice(w.n_tokens, size=max_tokens, replace=False))
+    return TokenizedWafer(w.coords[idx], w.state_ids[idx])
+
+
 def collate(batch: list[TokenizedWafer]):
     """Pad a batch to the max token count; return torch tensors + validity mask.
 

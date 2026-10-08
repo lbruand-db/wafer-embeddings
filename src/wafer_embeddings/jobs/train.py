@@ -31,6 +31,7 @@ def _args(argv=None):
     p.add_argument("--experiment", default=None, help="MLflow experiment (default: AI Runtime's).")
     p.add_argument("--max-train", type=int, default=50000, help="Train maps to sample (0=all).")
     p.add_argument("--eval-cap", type=int, default=20000, help="Labeled maps for eval.")
+    p.add_argument("--max-tokens", type=int, default=4096, help="Cap dies/wafer (GPU mem).")
     p.add_argument("--steps", type=int, default=2000)
     p.add_argument("--batch-size", type=int, default=128)
     p.add_argument("--embed-dim", type=int, default=384)
@@ -66,11 +67,13 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
     with stage(log, "load train split"):
         scan = dset.scanner(filter=ds.field("split") == "train")
         tbl = scan.head(a.max_train) if a.max_train else scan.to_table()
-        train_wafers, _, _ = wafers_from_rows(tbl.to_pylist())
+        train_wafers, _, _ = wafers_from_rows(tbl.to_pylist(), max_tokens=a.max_tokens, rng=rng)
     with stage(log, "load labeled eval"):
         scan = dset.scanner(filter=ds.field("label_id") >= 0)
         tbl = scan.head(a.eval_cap) if a.eval_cap else scan.to_table()
-        eval_wafers, eval_labels, eval_splits = wafers_from_rows(tbl.to_pylist())
+        eval_wafers, eval_labels, eval_splits = wafers_from_rows(
+            tbl.to_pylist(), max_tokens=a.max_tokens, rng=rng
+        )
     log.info(f"train={len(train_wafers)} eval_labeled={len(eval_wafers)}")
 
     encoder = PerDieViT(

@@ -5,6 +5,7 @@ from wafer_embeddings.tokenize.tokenizer import (
     STATE_FAIL,
     STATE_PASS,
     TokenizedWafer,
+    cap_tokens,
     collate,
     tokenize,
 )
@@ -14,6 +15,7 @@ __all__ = [
     "STATE_FAIL",
     "STATE_PASS",
     "TokenizedWafer",
+    "cap_tokens",
     "collate",
     "tokenize",
 ]

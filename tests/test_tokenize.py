@@ -95,6 +95,20 @@ def test_cutout_never_empty_and_subset():
     assert 0 < c.shape[0] <= t.n_tokens and c.shape[0] == s.shape[0]
 
 
+def test_cap_tokens_subsamples_and_preserves():
+    t = tk.tokenize(_disk(52, 52, 9)[0])
+    rng = np.random.default_rng(0)
+    cap = t.n_tokens // 3
+    capped = tk.cap_tokens(t, cap, rng)
+    assert capped.n_tokens == cap
+    assert capped.coords.shape == (cap, 3) and capped.state_ids.shape == (cap,)
+    # kept tokens are a subset of the originals (coords unchanged)
+    orig = {tuple(np.round(r, 6)) for r in t.coords}
+    assert all(tuple(np.round(r, 6)) in orig for r in capped.coords)
+    # no-op when already under the cap
+    assert tk.cap_tokens(t, t.n_tokens + 10, rng) is t
+
+
 def test_random_view_both_modes_valid():
     t = tk.tokenize(_disk(52, 52, 8)[0])
     rng = np.random.default_rng(3)

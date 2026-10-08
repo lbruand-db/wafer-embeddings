@@ -98,6 +98,25 @@ def test_g1_metrics_on_separable_embeddings():
     assert m["majority_baseline"] == 1 / 3  # 3 balanced classes in the queries
     assert m["map@10"] == 1.0
     assert m["cluster_nmi"] > 0.9
+    assert m["knn_recall_0"] == m["knn_recall_1"] == m["knn_recall_2"] == 1.0
+
+
+def test_g1_metrics_per_class_recall_uses_names_and_exposes_failures():
+    # class 2's queries sit on class 0's embedding -> its recall is 0, others perfect.
+    embs = [np.eye(3)[c] for c in (0, 1, 2)] * 2 + [np.eye(3)[0], np.eye(3)[1], np.eye(3)[0]]
+    labels = [0, 1, 2] * 2 + [0, 1, 2]
+    splits = ["train"] * 6 + ["test"] * 3
+    m = g1_metrics(
+        np.array(embs, dtype=np.float64),
+        np.array(labels),
+        np.array(splits, dtype=object),
+        n_classes=3,
+        knn_k=1,
+        class_names=("Center", "Donut", "Scratch"),
+    )
+    assert m["knn_recall_Center"] == 1.0 and m["knn_recall_Donut"] == 1.0
+    assert m["knn_recall_Scratch"] == 0.0
+    assert abs(m["knn_macro_recall"] - 2 / 3) < 1e-9
 
 
 def _imbalanced_labels():

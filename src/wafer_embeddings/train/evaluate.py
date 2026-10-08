@@ -66,8 +66,13 @@ def g1_metrics(
     splits: np.ndarray,
     n_classes: int,
     knn_k: int = 20,
+    class_names: tuple[str, ...] | None = None,
 ) -> dict[str, float]:
-    """kNN-probe accuracy, clustering ARI/NMI, and retrieval mAP@k on labeled data."""
+    """kNN-probe accuracy, clustering ARI/NMI, and retrieval mAP@k on labeled data.
+
+    Also reports per-class kNN recall (``knn_recall_<class>``, SPECS.md §8 "report
+    per-pattern") so rare-pattern failures aren't hidden by the averages.
+    """
     labeled = label_ids >= 0
     tr = labeled & (splits == "train")
     te = labeled & np.isin(splits, ["val", "test"])
@@ -85,8 +90,12 @@ def g1_metrics(
         pred = weighted_knn_predict(embeddings[tr], label_ids[tr], embeddings[te], k=knn_k)
         out["knn_acc"] = float((pred == label_ids[te]).mean())
         # balanced accuracy = mean per-class recall (imbalance-aware, SPECS.md §8.3)
-        recalls = [float((pred[label_ids[te] == c] == c).mean()) for c in np.unique(label_ids[te])]
-        out["knn_macro_recall"] = float(np.mean(recalls))
+        recalls = {}
+        for c in np.unique(label_ids[te]):
+            name = class_names[c] if class_names is not None else str(c)
+            recalls[name] = float((pred[label_ids[te] == c] == c).mean())
+            out[f"knn_recall_{name}"] = recalls[name]
+        out["knn_macro_recall"] = float(np.mean(list(recalls.values())))
 
     uniq = np.unique(label_ids[te]) if te.sum() else np.array([])
     if te.sum() > len(uniq) >= 2:

@@ -168,8 +168,21 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
 
     if a.experiment:
         mlflow.set_experiment(a.experiment)
+
+    def _eval(prefix: str) -> dict[str, float]:
+        emb = embed_all(dino, eval_wafers, device=device)
+        m = g1_metrics(emb, eval_labels, eval_splits, N_CLASSES, class_names=CLASS_NAMES)
+        m["effective_rank"] = effective_rank(emb)
+        return {f"{prefix}{k}": v for k, v in m.items()}
+
     with mlflow.start_run(run_name="dino-g1"):
         mlflow.log_params(vars(a) | {"device": device, "n_classes": N_CLASSES})
+        # Same eval maps, freshly initialized encoder: the bar training must beat.
+        with stage(log, "embed + eval untrained encoder (baseline)"):
+            baseline = _eval("untrained_")
+        mlflow.log_metrics(baseline)
+        log.info(f"untrained baseline: {baseline}")
+
         with stage(log, "train DINO"):
             losses = fit_dino(
                 dino,
@@ -189,11 +202,11 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
                 mlflow.log_metric("dino_loss", lv, step=i)
 
         with stage(log, "embed + eval (G1)"):
-            emb = embed_all(dino, eval_wafers, device=device)
-            metrics = g1_metrics(emb, eval_labels, eval_splits, N_CLASSES)
-            metrics["effective_rank"] = effective_rank(emb)
-        mlflow.log_metrics({k: v for k, v in metrics.items()})
+            metrics = _eval("")
+        mlflow.log_metrics(metrics)
         log.info(f"G1 metrics: {metrics}")
+        for k in ("knn_acc", "knn_macro_recall", "map@10", "cluster_nmi"):
+            log.info(f"{k}: untrained={baseline.get('untrained_' + k)} trained={metrics.get(k)}")
 
         path = "/tmp/wafer_encoder.pt"
         torch.save({"state_dict": encoder.state_dict(), "config": vars(a)}, path)

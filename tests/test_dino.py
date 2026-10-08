@@ -33,6 +33,17 @@ def test_head_shape():
     assert out.shape == (5, 256)
 
 
+def test_head_logits_are_cosine_and_non_degenerate():
+    # With unit-normalized prototypes, logits are cosine in [-1,1] and span a real
+    # range — the fix for the ln(K) uniform collapse (plain Linear left logits ~0).
+    torch.manual_seed(0)
+    head = DINOHead(16, out_dim=128, hidden=32, bottleneck=8)
+    out = head(torch.randn(4, 16))
+    assert torch.isfinite(out).all()
+    assert out.abs().max() <= 1.0 + 1e-4  # bounded cosine
+    assert (out.max(dim=1).values - out.min(dim=1).values).min() > 0.1  # not uniform
+
+
 def test_loss_nonnegative_and_center_moves():
     loss_fn = DINOLoss(out_dim=64)
     s = [torch.randn(4, 64), torch.randn(4, 64)]

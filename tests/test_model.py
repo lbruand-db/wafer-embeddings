@@ -84,6 +84,17 @@ def test_gradients_flow():
     assert any(g is not None and torch.isfinite(g).all() and g.abs().sum() > 0 for g in grads)
 
 
+def test_grad_checkpoint_forward_backward():
+    torch.manual_seed(0)
+    m = PerDieViT(embed_dim=16, width=32, depth=3, n_heads=4, grad_checkpoint=True).train()
+    coords, states, mask = _batch([6, 4])
+    emb = m(coords, states, mask)
+    assert emb.shape == (2, 16)
+    emb.sum().backward()
+    grads = [p.grad for p in m.parameters() if p.requires_grad]
+    assert any(g is not None and torch.isfinite(g).all() and g.abs().sum() > 0 for g in grads)
+
+
 def test_bad_config_rejected():
     with pytest.raises(ValueError):
         PerDieViT(attention="sparse")

@@ -14,6 +14,7 @@ from typing import cast
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.utils.checkpoint
 
 from wafer_embeddings.model.attention import ISAB, PMA, SAB
 from wafer_embeddings.tokenize.tokenizer import N_STATES
@@ -88,6 +89,7 @@ class PerDieViT(nn.Module):
         readout: str = "mean",  # "mean" | "pma"
         vocab_sizes: tuple[int, ...] = (N_STATES,),
         n_bands: int = 6,
+        grad_checkpoint: bool = False,
     ):
         super().__init__()
         if attention not in ("full", "isab"):
@@ -96,6 +98,7 @@ class PerDieViT(nn.Module):
             raise ValueError(f"readout must be 'mean' or 'pma', got {readout}")
         self.attention = attention
         self.readout = readout
+        self.grad_checkpoint = grad_checkpoint
         self.state_emb = MultiSchemeEmbedding(width, vocab_sizes)
         self.pos_enc = CoordPositionalEncoding(width, n_bands)
         self.blocks = nn.ModuleList(
@@ -119,7 +122,10 @@ class PerDieViT(nn.Module):
         # Zero out padded tokens so they never leak through residual/FFN paths.
         x = x * mask.unsqueeze(-1)
         for blk in self.blocks:
-            x = blk(x, mask)
+            if self.grad_checkpoint and self.training:
+                x = torch.utils.checkpoint.checkpoint(blk, x, mask, use_reentrant=False)
+            else:
+                x = blk(x, mask)
             x = x * mask.unsqueeze(-1)
         if self.readout == "mean":
             denom = mask.sum(dim=1, keepdim=True).clamp(min=1)

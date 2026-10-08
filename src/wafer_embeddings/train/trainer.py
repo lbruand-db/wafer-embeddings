@@ -7,6 +7,7 @@ Runtime serverless-GPU environment.
 
 from __future__ import annotations
 
+import math
 from typing import Callable
 
 import numpy as np
@@ -91,6 +92,12 @@ def train_step(
     return float(loss.detach())
 
 
+def _cosine(start: float, end: float, t: float) -> float:
+    """Cosine interpolate start -> end for t in [0, 1]."""
+    t = min(max(t, 0.0), 1.0)
+    return end + 0.5 * (start - end) * (1.0 + math.cos(math.pi * t))
+
+
 def fit_dino(
     dino,
     loss_fn,
@@ -102,14 +109,41 @@ def fit_dino(
     rng: np.random.Generator,
     device: str = "cpu",
     orientation_invariant: bool = True,
+    base_lr: float | None = None,
+    lr_min: float = 1e-6,
+    warmup_frac: float = 0.1,
+    teacher_temp: tuple[float, float] = (0.04, 0.07),
+    teacher_temp_warmup_frac: float = 0.3,
+    momentum: tuple[float, float] = (0.996, 1.0),
     log: Callable[[str], None] | None = None,
     log_every: int = 50,
 ) -> list[float]:
-    """Run ``steps`` DINO optimization steps, sampling random batches each step."""
+    """Run ``steps`` DINO steps with LR / teacher-temp / momentum schedules (ref [1]).
+
+    LR: linear warmup 0->base_lr over ``warmup_frac``, then cosine to ``lr_min``.
+    Teacher temp: linear warmup over ``teacher_temp_warmup_frac``, then held.
+    Teacher EMA momentum: cosine from ``momentum[0]`` to ``momentum[1]``.
+    """
     n = len(wafers)
     bs = min(batch_size, n)
+    if base_lr is None:
+        base_lr = optimizer.param_groups[0]["lr"]
+    warmup = max(int(steps * warmup_frac), 1)
+    tt_warmup = max(int(steps * teacher_temp_warmup_frac), 1)
+    tt0, tt1 = teacher_temp
+    m0, m1 = momentum
     losses: list[float] = []
     for step in range(1, steps + 1):
+        lr = (
+            base_lr * step / warmup
+            if step <= warmup
+            else _cosine(base_lr, lr_min, (step - warmup) / max(steps - warmup, 1))
+        )
+        for g in optimizer.param_groups:
+            g["lr"] = lr
+        loss_fn.teacher_temp = tt0 + (tt1 - tt0) * min(step / tt_warmup, 1.0)
+        dino.teacher_momentum = _cosine(m0, m1, step / max(steps, 1))
+
         idx = rng.integers(0, n, size=bs)
         batch = [wafers[i] for i in idx]
         loss = train_step(
@@ -123,7 +157,7 @@ def fit_dino(
         )
         losses.append(loss)
         if log is not None and (step % log_every == 0 or step == steps):
-            log(f"step {step}/{steps} loss={loss:.4f}")
+            log(f"step {step}/{steps} loss={loss:.4f} lr={lr:.2e} ttemp={loss_fn.teacher_temp:.3f}")
     return losses
 
 
@@ -133,6 +167,8 @@ def embed_all(
     """Embed all wafers with the (frozen) student encoder -> (N, D) L2-normalized."""
     import torch
 
+    was_training = dino.training
+    dino.eval()  # disable grad-checkpointing path during inference
     out: list[np.ndarray] = []
     with torch.no_grad():
         for i in range(0, len(wafers), batch_size):
@@ -141,4 +177,5 @@ def embed_all(
                 coords, states, mask = coords.to(device), states.to(device), mask.to(device)
             emb = dino.embed(coords, states, mask)
             out.append(emb.cpu().numpy())
+    dino.train(was_training)
     return np.concatenate(out, axis=0) if out else np.zeros((0, 1), dtype=np.float32)

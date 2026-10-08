@@ -15,19 +15,42 @@ import torch.nn.functional as F
 
 
 class DINOHead(nn.Module):
-    """MLP -> L2-normalized bottleneck -> prototype logits."""
+    """DINO projection head: MLP -> L2-normalized bottleneck -> cosine-to-prototypes.
 
-    def __init__(self, in_dim: int, out_dim: int = 4096, hidden: int = 512, bottleneck: int = 64):
+    The prototype (last-layer) weights are **unit-normalized** in the forward pass,
+    so logits are cosine similarities in [-1, 1] (equivalent to DINO's weight-norm
+    with the magnitude frozen at 1). A plain Linear here leaves logits ~0 and the loss
+    pinned at ln(out_dim) — the uniform collapse we observed (ref [1]).
+    """
+
+    def __init__(
+        self,
+        in_dim: int,
+        out_dim: int = 4096,
+        hidden: int = 2048,
+        bottleneck: int = 256,
+        n_layers: int = 3,
+    ):
         super().__init__()
-        self.mlp = nn.Sequential(
-            nn.Linear(in_dim, hidden), nn.GELU(), nn.Linear(hidden, bottleneck)
-        )
-        self.last = nn.Linear(bottleneck, out_dim, bias=False)
+        layers: list[nn.Module] = [nn.Linear(in_dim, hidden), nn.GELU()]
+        for _ in range(max(n_layers - 2, 0)):
+            layers += [nn.Linear(hidden, hidden), nn.GELU()]
+        layers.append(nn.Linear(hidden, bottleneck))
+        self.mlp = nn.Sequential(*layers)
+        self.prototypes = nn.Linear(bottleneck, out_dim, bias=False)
+        self.apply(self._init)
+
+    @staticmethod
+    def _init(m: nn.Module) -> None:
+        if isinstance(m, nn.Linear):
+            nn.init.trunc_normal_(m.weight, std=0.02)
+            if m.bias is not None:
+                nn.init.zeros_(m.bias)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.mlp(x)
-        x = F.normalize(x, dim=-1)
-        return self.last(x)
+        x = F.normalize(self.mlp(x), dim=-1)
+        w = F.normalize(self.prototypes.weight, dim=1)  # unit-norm prototypes
+        return F.linear(x, w)
 
 
 class DINOLoss(nn.Module):

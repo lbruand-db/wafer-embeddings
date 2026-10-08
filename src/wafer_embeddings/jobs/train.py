@@ -33,6 +33,12 @@ def _args(argv=None):
     p.add_argument("--max-train", type=int, default=50000, help="Train maps to sample (0=all).")
     p.add_argument("--eval-cap", type=int, default=20000, help="Labeled maps for eval.")
     p.add_argument("--max-tokens", type=int, default=4096, help="Cap dies/wafer (GPU mem).")
+    p.add_argument(
+        "--grad-checkpoint",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Gradient-checkpoint encoder blocks (fits depth-12 in A10 memory).",
+    )
     p.add_argument("--steps", type=int, default=2000)
     p.add_argument("--batch-size", type=int, default=128)
     p.add_argument("--embed-dim", type=int, default=384)
@@ -83,6 +89,7 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
         depth=a.depth,
         n_heads=a.heads,
         attention=a.attention,
+        grad_checkpoint=a.grad_checkpoint,
     )
     dino = DinoModel(encoder, DINOHead(a.embed_dim, out_dim=a.out_dim)).to(device)
     loss_fn = DINOLoss(out_dim=a.out_dim).to(device)

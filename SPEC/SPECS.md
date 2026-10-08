@@ -254,9 +254,9 @@ wafer map (native H×W, 3-valued)
 1. **Ingest** — read the WM-811K `LSWMD.pkl` archive from UC Volume
    `/Volumes/mmf_mlops_demo_catalog/wafer_embeddings/raw/`; **stream** records (the pickle
    is large — never materialize the whole corpus), clean labels, content-hash **dedup**,
-   assign leakage-safe splits, and write chunked into Delta
+   assign leakage-safe **lot-grouped** splits, and write chunked into Delta
    `mmf_mlops_demo_catalog.wafer_embeddings.wafer_maps` (`id`, flattened `wafer_map`,
-   `height`, `width`, `label_id` single int [−1 = unlabeled], `split`). Also export a
+   `height`, `width`, `label_id` single int [−1 = unlabeled], `split`, `lot`). Also export a
    **parquet** copy to the volume for the Spark-less AI Runtime trainer to read (§11.3).
    *(Downloaded archive is untrusted: extract into its own empty dir, treat as data, never
    execute from it; the pickle is loaded in a hardened `-I` interpreter.)*
@@ -351,10 +351,21 @@ vs. last-4-CLS concat vs. backbone output — these differ in DINO) [1].
 - **Footprint:** index size at 384-d across the ~700K → synthetic 1M corpus (N3).
 
 ### 8.7 Protocol
-- **Splits (leakage control):** fixed train/val/test by **content hash** so identical /
-  near-identical maps never straddle splits; exclude test wafers from DINO pretraining for
-  an **inductive** read (also report transductive). WM-811K contains genuine duplicate
-  maps, so content-hash **dedup** (696,599 unique of 811,457) runs before splitting.
+- **Splits (leakage control):** fixed train/val/test (80/10/10) by salted hash of the
+  WM-811K **`lotName`**, so a whole lot lands in one split (maps with no lot fall back to a
+  per-map content hash). Wafers of one lot share device and often defect: with the earlier
+  per-map split, two maps of the same shape shared a label 75% of the time vs 22% overall,
+  and a one-hot of map shape alone matched the untrained encoder on kNN / mAP@10. The
+  lot split is enforced at ingest (fails if any lot straddles splits): 45,345 lots
+  (train 36,120 / val 4,635 / test 4,590). Device-level correlation remains across lots
+  (same shape → same label 0.33 vs 0.11 across query-bank pairs), so G1 also reports
+  **cross-device** `xgroup_*` metrics (same-shape neighbours excluded; map shape is the
+  device proxy). Exclude test wafers from DINO pretraining for an **inductive** read
+  (also report transductive). WM-811K contains genuine duplicate maps, so content-hash
+  **dedup** (696,599 unique of 811,457) runs before splitting.
+- **Training-free bar:** every run also scores a handcrafted rotation-invariant polar
+  FAIL-density histogram (`eval/baselines.py`, `polar_*` metrics). A learned encoder is
+  only useful if it beats this, especially on the cross-device metrics.
 - **Baselines:** random; flattened-pixels / PCA; **frozen off-the-shelf DINOv2** [21];
   ImageNet-pretrained CNN features (cf. [27]); a **supervised ViT** upper bound; and the
   external **graph-contrastive** reference — **ARI 0.89 / NMI 0.87 / silhouette 0.76** on

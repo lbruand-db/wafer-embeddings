@@ -47,7 +47,7 @@ code_source:
 env_variables:
   PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True # reduce CUDA fragmentation
   MAX_TRAIN: "50000"
-  EVAL_CAP: "20000"
+  EVAL_CAP: "5000" # per side: val/test queries + train kNN bank (seeded, class-stratified)
   STEPS: "2000"
   BATCH_SIZE: "64"
   DEPTH: "12"

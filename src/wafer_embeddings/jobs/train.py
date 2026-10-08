@@ -18,7 +18,13 @@ import numpy as np
 
 from wafer_embeddings.data.wm811k import CLASS_NAMES
 from wafer_embeddings.obs import get_logger, stage
-from wafer_embeddings.train import embed_all, fit_dino, g1_metrics, wafers_from_rows
+from wafer_embeddings.train import (
+    embed_all,
+    fit_dino,
+    g1_metrics,
+    stratified_indices,
+    wafers_from_rows,
+)
 
 N_CLASSES = len(CLASS_NAMES)
 
@@ -31,7 +37,18 @@ def _args(argv=None):
     p.add_argument("--volume", default="raw", help="UC volume holding wafer_maps_parquet.")
     p.add_argument("--experiment", default=None, help="MLflow experiment (default: AI Runtime's).")
     p.add_argument("--max-train", type=int, default=50000, help="Train maps to sample (0=all).")
-    p.add_argument("--eval-cap", type=int, default=20000, help="Labeled maps for eval.")
+    p.add_argument(
+        "--eval-cap",
+        type=int,
+        default=5000,
+        help="Labeled maps per eval side: val/test queries, and train maps for the kNN bank.",
+    )
+    p.add_argument(
+        "--eval-sampling",
+        default="balanced",
+        choices=["balanced", "proportional"],
+        help="Class-stratified eval sample: equal per class, or proportional to frequency.",
+    )
     p.add_argument("--max-tokens", type=int, default=4096, help="Cap dies/wafer (GPU mem).")
     p.add_argument(
         "--grad-checkpoint",
@@ -58,6 +75,29 @@ def _args(argv=None):
     return p.parse_args(argv)
 
 
+def load_eval_table(dset, eval_cap: int, seed: int, balanced: bool = True):  # pragma: no cover
+    """Seeded, class-stratified labeled eval sample from a pyarrow dataset.
+
+    Queries come from labeled val/test maps, the kNN bank from labeled train maps,
+    ``eval_cap`` of each. Only the small id/label/split columns are read for the full
+    labeled set; wafer maps are fetched just for the sampled ids. The dedicated RNG
+    keeps the eval set identical across runs with the same seed, so runs are comparable.
+    """
+    import pyarrow.dataset as ds  # ty: ignore[unresolved-import]
+
+    meta = dset.to_table(columns=["id", "label_id", "split"], filter=ds.field("label_id") >= 0)
+    ids = meta.column("id").to_numpy()
+    labels = meta.column("label_id").to_numpy()
+    splits = np.array(meta.column("split").to_pylist(), dtype=object)
+    rng = np.random.default_rng(seed)
+    picked = []
+    for side in (np.isin(splits, ["val", "test"]), splits == "train"):
+        pos = stratified_indices(labels[side], eval_cap, rng, balanced=balanced)
+        picked.append(ids[side][pos])
+    want = np.concatenate(picked).tolist()
+    return dset.to_table(filter=ds.field("id").isin(want))
+
+
 def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
     import mlflow  # ty: ignore[unresolved-import]
     import pyarrow.dataset as ds  # ty: ignore[unresolved-import]
@@ -82,13 +122,14 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
         scan = dset.scanner(filter=ds.field("split") == "train")
         tbl = scan.head(a.max_train) if a.max_train else scan.to_table()
         train_wafers, _, _ = wafers_from_rows(tbl.to_pylist(), max_tokens=a.max_tokens, rng=rng)
-    with stage(log, "load labeled eval"):
-        scan = dset.scanner(filter=ds.field("label_id") >= 0)
-        tbl = scan.head(a.eval_cap) if a.eval_cap else scan.to_table()
+    with stage(log, f"load labeled eval ({a.eval_sampling} stratified sample)"):
+        tbl = load_eval_table(dset, a.eval_cap, a.seed, balanced=a.eval_sampling == "balanced")
         eval_wafers, eval_labels, eval_splits = wafers_from_rows(
             tbl.to_pylist(), max_tokens=a.max_tokens, rng=rng
         )
-    log.info(f"train={len(train_wafers)} eval_labeled={len(eval_wafers)}")
+    q = np.isin(eval_splits, ["val", "test"])
+    mix = dict(zip(*(v.tolist() for v in np.unique(eval_labels[q], return_counts=True))))
+    log.info(f"train={len(train_wafers)} eval_labeled={len(eval_wafers)} query class mix={mix}")
 
     encoder = PerDieViT(
         embed_dim=a.embed_dim,

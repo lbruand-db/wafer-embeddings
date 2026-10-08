@@ -5,7 +5,13 @@ from wafer_embeddings.data.mixedwm38 import FAIL, NO_DIE, PASS
 from wafer_embeddings.model.dino import DinoModel, DINOHead
 from wafer_embeddings.model.encoder import PerDieViT
 from wafer_embeddings.tokenize import tokenizer as tk
-from wafer_embeddings.train import embed_all, fit_dino, g1_metrics, wafers_from_rows
+from wafer_embeddings.train import (
+    embed_all,
+    fit_dino,
+    g1_metrics,
+    stratified_indices,
+    wafers_from_rows,
+)
 from wafer_embeddings.model.dino import DINOLoss
 
 
@@ -88,5 +94,38 @@ def test_g1_metrics_on_separable_embeddings():
         n_classes=3,
     )
     assert m["knn_acc"] == 1.0
+    assert m["knn_macro_recall"] == 1.0
+    assert m["majority_baseline"] == 1 / 3  # 3 balanced classes in the queries
     assert m["map@10"] == 1.0
     assert m["cluster_nmi"] > 0.9
+
+
+def _imbalanced_labels():
+    # WM-811K-like skew: one dominant class, one mid, one rare.
+    return np.array([0] * 1000 + [1] * 50 + [2] * 5)
+
+
+def test_stratified_indices_balanced_water_fills():
+    labels = _imbalanced_labels()
+    pos = stratified_indices(labels, 60, np.random.default_rng(0), balanced=True)
+    assert len(pos) == 60 and len(np.unique(pos)) == 60  # exact size, no duplicates
+    counts = np.bincount(labels[pos], minlength=3)
+    assert counts[2] == 5  # the rare class contributes everything it has
+    assert abs(int(counts[0]) - int(counts[1])) <= 1  # leftover shared equally
+
+
+def test_stratified_indices_proportional_and_deterministic():
+    labels = _imbalanced_labels()
+    a = stratified_indices(labels, 211, np.random.default_rng(7), balanced=False)
+    b = stratified_indices(labels, 211, np.random.default_rng(7), balanced=False)
+    assert np.array_equal(a, b)  # same seed -> same eval set across runs
+    counts = np.bincount(labels[a], minlength=3)
+    assert counts.sum() == 211
+    expected = np.array([1000, 50, 5]) * 211 / 1055
+    assert np.all(np.abs(counts - expected) <= 1)
+
+
+def test_stratified_indices_returns_all_when_n_exceeds():
+    labels = _imbalanced_labels()
+    pos = stratified_indices(labels, 10_000, np.random.default_rng(0))
+    assert np.array_equal(pos, np.arange(len(labels)))

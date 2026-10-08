@@ -133,6 +133,7 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
     import pyarrow.dataset as ds
     import torch
 
+    from wafer_embeddings.eval.baselines import polar_fail_embedding
     from wafer_embeddings.eval.metrics import effective_rank
     from wafer_embeddings.model.dino import DinoModel, DINOHead, DINOLoss
     from wafer_embeddings.model.encoder import PerDieViT
@@ -183,8 +184,9 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
     if a.experiment:
         mlflow.set_experiment(a.experiment)
 
-    def _eval(prefix: str) -> dict[str, float]:
-        emb = embed_all(dino, eval_wafers, device=device)
+    def _eval(prefix: str, emb: np.ndarray | None = None) -> dict[str, float]:
+        if emb is None:
+            emb = embed_all(dino, eval_wafers, device=device)
         m = g1_metrics(
             emb, eval_labels, eval_splits, N_CLASSES, class_names=CLASS_NAMES, groups=eval_groups
         )
@@ -210,6 +212,11 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
             baseline = _eval("untrained_")
         mlflow.log_metrics(baseline)
         log.info(f"untrained baseline: {baseline}")
+        # Training-free handcrafted defect descriptor: the bar a learned encoder must beat.
+        with stage(log, "eval polar FAIL-histogram baseline"):
+            polar = _eval("polar_", polar_fail_embedding(eval_wafers))
+        mlflow.log_metrics(polar)
+        log.info(f"polar baseline: {polar}")
 
         with stage(log, "train DINO"):
             fit_dino(
@@ -243,7 +250,10 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
             "xgroup_knn_macro_recall",
             "xgroup_precision@10",
         ):
-            log.info(f"{k}: untrained={baseline.get('untrained_' + k)} trained={metrics.get(k)}")
+            log.info(
+                f"{k}: polar={polar.get('polar_' + k)} "
+                f"untrained={baseline.get('untrained_' + k)} trained={metrics.get(k)}"
+            )
 
         path = "/tmp/wafer_encoder.pt"
         torch.save({"state_dict": encoder.state_dict(), "config": vars(a)}, path)

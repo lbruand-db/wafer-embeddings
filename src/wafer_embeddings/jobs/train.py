@@ -22,6 +22,7 @@ from wafer_embeddings.train import (
     embed_all,
     fit_dino,
     g1_metrics,
+    selection_score,
     stratified_indices,
     wafers_from_rows,
 )
@@ -70,6 +71,15 @@ def _args(argv=None):
         type=float,
         default=0.1,
         help="Freeze the DINO prototype layer for this fraction of steps (stabilizer).",
+    )
+    p.add_argument("--clip-grad", type=float, default=0.0, help="Global grad-norm clip (0 = off).")
+    p.add_argument("--warmup-frac", type=float, default=0.1, help="LR linear-warmup fraction.")
+    p.add_argument(
+        "--select-every",
+        type=int,
+        default=200,
+        help="Score a checkpoint on the train-side kNN bank every N steps and keep the best "
+        "(0 = keep the final weights).",
     )
     p.add_argument("--seed", type=int, default=0)
     return p.parse_args(argv)
@@ -175,6 +185,18 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
         m["effective_rank"] = effective_rank(emb)
         return {f"{prefix}{k}": v for k, v in m.items()}
 
+    # Checkpoint selection uses only the labeled train-side bank, never the G1 queries.
+    bank = np.nonzero(eval_splits == "train")[0]
+    bank_wafers = [eval_wafers[i] for i in bank]
+
+    def _select() -> float:
+        emb = embed_all(dino, bank_wafers, device=device)
+        return selection_score(emb, eval_labels[bank], N_CLASSES)
+
+    def _monitor(step: int, stats: dict[str, float]) -> None:
+        stats = {("dino_loss" if k == "loss" else k): v for k, v in stats.items()}
+        mlflow.log_metrics({f"train/{k}": v for k, v in stats.items()}, step=step)
+
     with mlflow.start_run(run_name="dino-g1"):
         mlflow.log_params(vars(a) | {"device": device, "n_classes": N_CLASSES})
         # Same eval maps, freshly initialized encoder: the bar training must beat.
@@ -184,7 +206,7 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
         log.info(f"untrained baseline: {baseline}")
 
         with stage(log, "train DINO"):
-            losses = fit_dino(
+            fit_dino(
                 dino,
                 loss_fn,
                 opt,
@@ -194,12 +216,14 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
                 rng=rng,
                 device=device,
                 freeze_last_frac=a.freeze_last_frac,
+                warmup_frac=a.warmup_frac,
+                clip_grad=a.clip_grad or None,
                 log=log.info,
                 log_every=50,
+                monitor=_monitor,
+                select_fn=_select if a.select_every else None,
+                select_every=a.select_every,
             )
-        for i, lv in enumerate(losses):
-            if i % 50 == 0:
-                mlflow.log_metric("dino_loss", lv, step=i)
 
         with stage(log, "embed + eval (G1)"):
             metrics = _eval("")

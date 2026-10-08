@@ -70,6 +70,32 @@ def build_views(
     return views
 
 
+def collapse_stats(dino, loss_fn, teacher_logits, view) -> dict[str, float]:
+    """Collapse gauges for one step (ref [1]; SimSiam's embedding-std check).
+
+    - ``t_entropy`` / ``t_maxp``: entropy and mean max-probability of the centered,
+      sharpened teacher target. Uniform collapse = entropy ~ ln(out_dim), maxp ~ 1/out_dim;
+      one-prototype collapse = entropy ~ 0, maxp ~ 1. Healthy training sits in between.
+    - ``emb_std``: mean per-dimension std of the L2-normalized student encoder output
+      across the batch, scaled by sqrt(dim) so a well-spread embedding is ~1 and a
+      collapsed one (every wafer in the same direction) goes to 0.
+    """
+    import torch
+
+    with torch.no_grad():
+        t = torch.softmax((teacher_logits - loss_fn.center) / loss_fn.teacher_temp, dim=-1)
+        ent = -(t * (t + 1e-12).log()).sum(dim=-1).mean()
+        emb = dino.student_enc(*view)
+        emb_std = (
+            emb.std(dim=0).mean() * math.sqrt(emb.shape[-1]) if len(emb) > 1 else emb.new_zeros(())
+        )
+    return {
+        "t_entropy": float(ent),
+        "t_maxp": float(t.max(dim=-1).values.mean()),
+        "emb_std": float(emb_std),
+    }
+
+
 def train_step(
     dino,
     loss_fn,
@@ -79,17 +105,26 @@ def train_step(
     orientation_invariant: bool = True,
     device: str = "cpu",
     freeze_last: bool = False,
+    clip_grad: float | None = None,
+    stats: dict[str, float] | None = None,
 ) -> float:
     """One DINO optimization step over a batch of tokenized wafers.
 
     ``freeze_last`` zeros the prototype (last-layer) gradient this step — DINO's
     early-training stabilizer (ref [1]): without it, real-data training is unstable and
-    oscillates in and out of the uniform collapse.
+    oscillates in and out of the uniform collapse. ``clip_grad`` clips the global grad
+    norm (DINO uses 3.0). If ``stats`` is given, it is filled with ``collapse_stats`` and
+    the pre-clip ``grad_norm`` (costs one extra no-grad encoder pass, so only ask on log
+    steps).
     """
+    import torch
+
     views = build_views(wafers, rng, n_views=2, orientation_invariant=orientation_invariant)
     views = _to_device(views, device)
     student = dino.student_views(views)
     teacher = dino.teacher_views(views)
+    if stats is not None:
+        stats.update(collapse_stats(dino, loss_fn, teacher[0], views[0]))
     loss = loss_fn(student, teacher)
     optimizer.zero_grad()
     loss.backward()
@@ -97,6 +132,13 @@ def train_step(
         proto = getattr(getattr(dino, "student_head", None), "prototypes", None)
         if proto is not None:
             proto.weight.grad = None
+    params = [p for g in optimizer.param_groups for p in g["params"] if p.grad is not None]
+    if clip_grad is not None or stats is not None:
+        norm = torch.nn.utils.clip_grad_norm_(
+            params, clip_grad if clip_grad is not None else float("inf")
+        )
+        if stats is not None:
+            stats["grad_norm"] = float(norm)
     optimizer.step()
     dino.update_teacher()
     return float(loss.detach())
@@ -126,8 +168,12 @@ def fit_dino(
     teacher_temp_warmup_frac: float = 0.3,
     momentum: tuple[float, float] = (0.996, 1.0),
     freeze_last_frac: float = 0.1,
+    clip_grad: float | None = None,
     log: Callable[[str], None] | None = None,
     log_every: int = 50,
+    monitor: Callable[[int, dict[str, float]], None] | None = None,
+    select_fn: Callable[[], float] | None = None,
+    select_every: int = 0,
 ) -> list[float]:
     """Run ``steps`` DINO steps with LR / teacher-temp / momentum schedules (ref [1]).
 
@@ -138,6 +184,14 @@ def fit_dino(
     Teacher EMA momentum: cosine from ``momentum[0]`` to ``momentum[1]``.
     ``freeze_last_frac``: freeze the prototype layer for the first fraction of steps
     (DINO's stabilizer; prevents the early collapse-and-oscillate on real data).
+    ``clip_grad``: global grad-norm clip (None = off).
+
+    Every ``log_every`` steps, ``collapse_stats`` + grad norm are computed and passed to
+    ``monitor(step, stats)`` and the ``log`` line. If ``select_fn`` is given (higher =
+    better; must not touch the reported eval queries), it is scored before training and
+    every ``select_every`` steps, and the best-scoring weights are restored at the end
+    (step 0 included, so a run that only degrades returns the untrained weights). The
+    chosen step is reported to ``monitor`` as ``best_step`` / ``best_score``.
     """
     n = len(wafers)
     bs = min(batch_size, n)
@@ -149,6 +203,19 @@ def fit_dino(
     tt0, tt1 = teacher_temp
     m0, m1 = momentum
     losses: list[float] = []
+    best: tuple[float, int, dict] | None = None
+
+    def _select(step: int) -> None:
+        nonlocal best
+        score = select_fn()  # ty: ignore[call-non-callable]
+        if log is not None:
+            log(f"step {step}/{steps} select_score={score:.4f}")
+        if best is None or score > best[0]:
+            snap = {k: v.detach().clone() for k, v in dino.state_dict().items()}
+            best = (score, step, snap)
+
+    if select_fn is not None:
+        _select(0)
     for step in range(1, steps + 1):
         lr = (
             base_lr * step / warmup
@@ -162,6 +229,8 @@ def fit_dino(
 
         idx = rng.integers(0, n, size=bs)
         batch = [wafers[i] for i in idx]
+        log_step = step % log_every == 0 or step == steps
+        stats: dict[str, float] | None = {} if log_step else None
         loss = train_step(
             dino,
             loss_fn,
@@ -171,10 +240,30 @@ def fit_dino(
             orientation_invariant=orientation_invariant,
             device=device,
             freeze_last=step <= freeze_steps,
+            clip_grad=clip_grad,
+            stats=stats,
         )
         losses.append(loss)
-        if log is not None and (step % log_every == 0 or step == steps):
-            log(f"step {step}/{steps} loss={loss:.4f} lr={lr:.2e} ttemp={loss_fn.teacher_temp:.3f}")
+        if stats is not None:
+            stats |= {"loss": loss, "lr": lr, "teacher_temp": float(loss_fn.teacher_temp)}
+            if monitor is not None:
+                monitor(step, stats)
+            if log is not None:
+                log(
+                    f"step {step}/{steps} loss={loss:.4f} lr={lr:.2e} "
+                    f"ttemp={loss_fn.teacher_temp:.3f} t_ent={stats['t_entropy']:.3f} "
+                    f"t_maxp={stats['t_maxp']:.4f} emb_std={stats['emb_std']:.3f} "
+                    f"grad_norm={stats['grad_norm']:.3f}"
+                )
+        if select_fn is not None and select_every and (step % select_every == 0 or step == steps):
+            _select(step)
+    if best is not None:
+        score, best_step, snap = best
+        dino.load_state_dict(snap)
+        if log is not None:
+            log(f"restored best weights from step {best_step} (select_score={score:.4f})")
+        if monitor is not None:
+            monitor(steps, {"best_step": float(best_step), "best_score": score})
     return losses
 
 

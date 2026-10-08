@@ -53,6 +53,10 @@ env_variables:
   DEPTH: "12"
   MAX_TOKENS: "4096"
   LR: "5e-4"
+  WARMUP_FRAC: "0.1"
+  FREEZE_LAST_FRAC: "0.1" # DINO prototype-layer freeze (stabilizer)
+  CLIP_GRAD: "0" # global grad-norm clip, 0 = off
+  SELECT_EVERY: "200" # keep-best checkpoint, scored on the train-side kNN bank only
   # ISAB (O(N*m)) is the default: WM-811K has large variable-size maps for which
   # full O(N^2) attention OOMs an A10 (SPECS.md §4 / de-risking R3).
   ATTENTION: "isab"
@@ -62,4 +66,6 @@ command: |
     --catalog mmf_mlops_demo_catalog --schema wafer_embeddings \
     --max-train "$MAX_TRAIN" --eval-cap "$EVAL_CAP" --steps "$STEPS" \
     --batch-size "$BATCH_SIZE" --attention "$ATTENTION" \
-    --depth "$DEPTH" --max-tokens "$MAX_TOKENS" --lr "$LR"
+    --depth "$DEPTH" --max-tokens "$MAX_TOKENS" --lr "$LR" \
+    --warmup-frac "$WARMUP_FRAC" --freeze-last-frac "$FREEZE_LAST_FRAC" \
+    --clip-grad "$CLIP_GRAD" --select-every "$SELECT_EVERY"

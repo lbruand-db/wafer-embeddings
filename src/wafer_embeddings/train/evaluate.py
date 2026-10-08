@@ -54,6 +54,19 @@ def stratified_indices(
     return np.sort(np.concatenate(picks)) if picks else np.zeros(0, dtype=np.int64)
 
 
+def selection_score(embeddings: np.ndarray, label_ids: np.ndarray, n_classes: int) -> float:
+    """Checkpoint-selection score from labeled **train** maps only.
+
+    Alternate items form a kNN bank and a query set; returns the queries' kNN macro
+    recall. Choosing a checkpoint on the reported val/test queries would leak them into
+    the G1 numbers, so the selection set is drawn from the train split instead.
+    """
+    half = np.where(np.arange(len(label_ids)) % 2 == 0, "train", "val").astype(object)
+    return g1_metrics(embeddings, np.asarray(label_ids), half, n_classes).get(
+        "knn_macro_recall", 0.0
+    )
+
+
 def _one_hot(ids: np.ndarray, n_classes: int) -> np.ndarray:
     oh = np.zeros((len(ids), n_classes), dtype=np.float64)
     oh[np.arange(len(ids)), ids] = 1.0

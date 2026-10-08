@@ -148,3 +148,106 @@ def test_stratified_indices_returns_all_when_n_exceeds():
     labels = _imbalanced_labels()
     pos = stratified_indices(labels, 10_000, np.random.default_rng(0))
     assert np.array_equal(pos, np.arange(len(labels)))
+
+
+def _fit_tiny(steps=4, **kw):
+    wafers = [tk.tokenize(_disk(i)) for i in range(6)]
+    dino = _tiny_dino(embed_dim=16)
+    opt = torch.optim.SGD(
+        list(dino.student_enc.parameters()) + list(dino.student_head.parameters()), lr=0.3
+    )
+    seen: list[tuple[int, dict]] = []
+    losses = fit_dino(
+        dino,
+        DINOLoss(out_dim=64),
+        opt,
+        wafers,
+        steps=steps,
+        batch_size=4,
+        rng=np.random.default_rng(0),
+        monitor=lambda step, st: seen.append((step, dict(st))),
+        **kw,
+    )
+    return dino, losses, seen
+
+
+def test_fit_dino_monitor_reports_collapse_stats():
+    _, _, seen = _fit_tiny(steps=4, log_every=2, clip_grad=1.0)
+    steps = [s for s, st in seen if "loss" in st]
+    assert steps == [2, 4]
+    st = seen[0][1]
+    for k in ("loss", "lr", "teacher_temp", "t_entropy", "t_maxp", "emb_std", "grad_norm"):
+        assert k in st and np.isfinite(st[k])
+    assert 0.0 <= st["t_entropy"] <= np.log(64) + 1e-6
+    assert 1 / 64 - 1e-6 <= st["t_maxp"] <= 1.0
+    assert st["emb_std"] >= 0.0
+
+
+def test_collapse_stats_emb_std_is_zero_when_all_embeddings_identical():
+    from wafer_embeddings.train import collapse_stats
+
+    dino = _tiny_dino(embed_dim=16)
+    w = tk.tokenize(_disk(0))
+    view = tk.collate([w, w, w])  # three copies -> identical embeddings
+    st = collapse_stats(dino, DINOLoss(out_dim=64), torch.zeros(3, 64), view)
+    assert st["emb_std"] < 1e-5
+    assert abs(st["t_entropy"] - np.log(64)) < 1e-4  # zero logits -> uniform teacher
+    assert abs(st["t_maxp"] - 1 / 64) < 1e-6
+
+
+def test_clip_grad_bounds_the_update():
+    # with a tiny clip, one SGD step can move the params by at most lr * clip in L2
+    wafers = [tk.tokenize(_disk(i)) for i in range(4)]
+    dino = _tiny_dino(embed_dim=16)
+    params = list(dino.student_enc.parameters()) + list(dino.student_head.parameters())
+    before = torch.cat([p.detach().flatten().clone() for p in params])
+    opt = torch.optim.SGD(params, lr=1.0)
+    from wafer_embeddings.train import train_step
+
+    train_step(dino, DINOLoss(out_dim=64), opt, wafers, np.random.default_rng(0), clip_grad=1e-3)
+    after = torch.cat([p.detach().flatten() for p in params])
+    assert float((after - before).norm()) <= 1e-3 + 1e-6
+
+
+def test_fit_dino_restores_best_selected_weights():
+    # a selection score that peaks at step 2 -> the step-2 weights are restored
+    scores = iter([0.1, 0.2, 0.9, 0.3, 0.4])  # steps 0, 1, 2, 3, 4
+    snaps: dict[int, torch.Tensor] = {}
+    holder: dict = {}
+
+    def select():
+        w = holder["dino"].student_enc.state_dict()
+        key = next(iter(w))
+        snaps[len(snaps)] = w[key].detach().clone()
+        return next(scores)
+
+    wafers = [tk.tokenize(_disk(i)) for i in range(6)]
+    dino = _tiny_dino(embed_dim=16)
+    holder["dino"] = dino
+    opt = torch.optim.SGD(
+        list(dino.student_enc.parameters()) + list(dino.student_head.parameters()), lr=0.3
+    )
+    seen = []
+    fit_dino(
+        dino,
+        DINOLoss(out_dim=64),
+        opt,
+        wafers,
+        steps=4,
+        batch_size=4,
+        rng=np.random.default_rng(0),
+        select_fn=select,
+        select_every=1,
+        monitor=lambda s, st: seen.append(st),
+    )
+    key = next(iter(dino.student_enc.state_dict()))
+    assert torch.equal(dino.student_enc.state_dict()[key], snaps[2])
+    assert seen[-1]["best_step"] == 2.0 and seen[-1]["best_score"] == 0.9
+
+
+def test_selection_score_uses_only_given_maps():
+    from wafer_embeddings.train import selection_score
+
+    labels = np.array([0, 0, 1, 1, 2, 2] * 3)
+    emb = np.eye(3)[labels].astype(np.float64)
+    assert selection_score(emb, labels, n_classes=3) == 1.0

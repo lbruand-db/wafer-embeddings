@@ -27,6 +27,7 @@ def _args(argv=None):
     p.add_argument("--catalog", required=True)
     p.add_argument("--schema", required=True)
     p.add_argument("--table", default="wafer_maps")
+    p.add_argument("--volume", default="raw", help="UC volume holding wafer_maps_parquet.")
     p.add_argument("--experiment", default=None, help="MLflow experiment (default: AI Runtime's).")
     p.add_argument("--max-train", type=int, default=50000, help="Train maps to sample (0=all).")
     p.add_argument("--eval-cap", type=int, default=20000, help="Labeled maps for eval.")
@@ -44,8 +45,8 @@ def _args(argv=None):
 
 def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
     import mlflow  # ty: ignore[unresolved-import]
+    import pyarrow.dataset as ds  # ty: ignore[unresolved-import]
     import torch
-    from databricks.sdk.runtime import spark  # type: ignore
 
     from wafer_embeddings.eval.metrics import effective_rank
     from wafer_embeddings.model.dino import DinoModel, DINOHead, DINOLoss
@@ -58,17 +59,18 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
     rng = np.random.default_rng(a.seed)
     torch.manual_seed(a.seed)
 
-    fqn = f"{a.catalog}.{a.schema}.{a.table}"
-    t = spark.table(fqn)
+    # AI Runtime serverless GPU has no Spark session; read the volume parquet export
+    # with pyarrow (bounded via .head so we never materialize the whole corpus).
+    pq = f"/Volumes/{a.catalog}/{a.schema}/{a.volume}/wafer_maps_parquet"
+    dset = ds.dataset(pq, format="parquet")
     with stage(log, "load train split"):
-        q = t.where("split = 'train'")
-        if a.max_train:
-            q = q.limit(a.max_train)
-        train_rows = q.toPandas().to_dict("records")
-        train_wafers, _, _ = wafers_from_rows(train_rows)
+        scan = dset.scanner(filter=ds.field("split") == "train")
+        tbl = scan.head(a.max_train) if a.max_train else scan.to_table()
+        train_wafers, _, _ = wafers_from_rows(tbl.to_pylist())
     with stage(log, "load labeled eval"):
-        eval_rows = t.where("label_id >= 0").limit(a.eval_cap).toPandas().to_dict("records")
-        eval_wafers, eval_labels, eval_splits = wafers_from_rows(eval_rows)
+        scan = dset.scanner(filter=ds.field("label_id") >= 0)
+        tbl = scan.head(a.eval_cap) if a.eval_cap else scan.to_table()
+        eval_wafers, eval_labels, eval_splits = wafers_from_rows(tbl.to_pylist())
     log.info(f"train={len(train_wafers)} eval_labeled={len(eval_wafers)}")
 
     encoder = PerDieViT(

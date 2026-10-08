@@ -6,8 +6,9 @@
 #                     --override env_variables.MAX_TRAIN=3000 \
 #                     --override env_variables.EVAL_CAP=2000
 #
-# AI Runtime is Public Preview and these commands are "under active development"
-# (databricks air). Schema introspected from `databricks air run -h config`.
+# Local code is shipped the documented way: code_source.snapshot uploads ./src and
+# exposes it to the command via $CODE_SOURCE_PATH (no wheel/volume install).
+# AI Runtime is Public Preview; `databricks air` is "under active development".
 
 experiment_name: wafer-embeddings
 mlflow_experiment_directory: /Workspace/Users/lucas.bruand@databricks.com
@@ -17,21 +18,26 @@ compute:
   accelerator_type: GPU_1xA10
   num_accelerators: 1
 
+# Fail fast during development — no silent retries hiding/delaying errors.
+max_retries: 0
+
 environment:
-  version: "6" # AI Runtime GPU image (ships PyTorch/CUDA); torch not reinstalled
+  version: "6" # env v6 ships numpy but NOT torch — code_source doesn't install our
+               # package deps, so declare everything the job imports explicitly.
   dependencies:
+    - torch # CUDA build from PyPI; uses the A10 at runtime
     - scikit-learn
     - mlflow
+    - pandas
+    - pyarrow
 
-# Upload the local source tree so the run can import wafer_embeddings via PYTHONPATH
-# (no wheel build/upload needed; torch comes from the image).
+# Upload src/ (top-level = the wafer_embeddings package) and import it via PYTHONPATH.
 code_source:
   type: snapshot
+    # root_path is relative to THIS YAML file (ai_runtime/), so ../src = repo-root/src.
   snapshot:
-    root_path: .
+    root_path: ../src
     remote_volume: /Volumes/mmf_mlops_demo_catalog/wafer_embeddings/raw
-    include_paths:
-      - src
 
 # Overridable sizes (see --override above); defaults are the full Gate-G1 run.
 env_variables:
@@ -40,7 +46,7 @@ env_variables:
   STEPS: "2000"
 
 command: |
-  PYTHONPATH=src python -m wafer_embeddings.jobs.train \
+  PYTHONPATH="$CODE_SOURCE_PATH" python -m wafer_embeddings.jobs.train \
     --catalog mmf_mlops_demo_catalog --schema wafer_embeddings \
     --max-train "$MAX_TRAIN" --eval-cap "$EVAL_CAP" --steps "$STEPS" \
     --batch-size 128 --attention full

@@ -141,6 +141,12 @@ def main(argv: list[str] | None = None) -> None:  # pragma: no cover - needs Spa
             written += len(chunk)
     log.info(f"wrote {written} rows ({labeled} labeled) to {fqn}")
 
+    # Parquet export to the volume: AI Runtime serverless GPU has no Spark, so the
+    # training job reads these files directly (SPECS.md §11.3).
+    pq = f"{vol}/wafer_maps_parquet"
+    with stage(log, f"export parquet -> {pq}"):
+        spark.read.table(fqn).write.mode("overwrite").parquet(pq)
+
 
 if __name__ == "__main__":  # pragma: no cover
     main()

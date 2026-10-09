@@ -17,9 +17,31 @@ resources:
               - "--schema"
               - "${var.schema}"
           environment_key: default
+        - task_key: lakebase_sync
+          depends_on:
+            - task_key: embed
+          python_wheel_task:
+            package_name: wafer_embeddings
+            entry_point: wafer-lakebase
+            parameters:
+              - "--source-table"
+              - "${var.catalog}.${var.schema}.wafer_map_embeddings"
+              - "--synced-table"
+              - "${var.catalog}.${var.schema}.wafer_map_embeddings_pg"
+              - "--dim"
+              - "${var.embed_dim}"
+              - "--refresh"
+          environment_key: lakebase
       environments:
         - environment_key: default
           spec:
             environment_version: "${var.serverless_environment_version}"
             dependencies:
               - ../dist/*.whl
+        - environment_key: lakebase
+          spec:
+            environment_version: "${var.serverless_environment_version}"
+            dependencies:
+              - ../dist/*.whl
+              - databricks-sdk>=0.148.0
+              - psycopg[binary]

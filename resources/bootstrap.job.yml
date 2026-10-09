@@ -3,7 +3,9 @@ resources:
     bootstrap:
       name: wafer-embeddings-bootstrap
       description: >-
-        Idempotently create the UC schema + volume for the project (SPECS.md §11.8).
+        Idempotently create the UC schema + volume, then the Lakebase project with
+        Lakebase Search enabled, its database and the lakebase_vector extension (plus the
+        synced table, ANN index and app grants once embeddings exist). SPECS.md §11.8.
         Safe to re-run; creates nothing that already exists.
       tasks:
         - task_key: bootstrap
@@ -18,9 +20,30 @@ resources:
               - "--volume"
               - "${var.volume}"
           environment_key: default
+        - task_key: lakebase
+          depends_on:
+            - task_key: bootstrap
+          python_wheel_task:
+            package_name: wafer_embeddings
+            entry_point: wafer-lakebase
+            parameters:
+              - "--source-table"
+              - "${var.catalog}.${var.schema}.wafer_map_embeddings"
+              - "--synced-table"
+              - "${var.catalog}.${var.schema}.wafer_map_embeddings_pg"
+              - "--dim"
+              - "${var.embed_dim}"
+          environment_key: lakebase
       environments:
         - environment_key: default
           spec:
             environment_version: "${var.serverless_environment_version}"
             dependencies:
               - ../dist/*.whl
+        - environment_key: lakebase
+          spec:
+            environment_version: "${var.serverless_environment_version}"
+            dependencies:
+              - ../dist/*.whl
+              - databricks-sdk>=0.148.0
+              - psycopg[binary]

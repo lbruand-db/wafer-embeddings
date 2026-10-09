@@ -1,0 +1,4 @@
+streamlit
+psycopg[binary]
+databricks-sdk>=0.102.0
+numpy

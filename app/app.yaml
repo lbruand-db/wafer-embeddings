@@ -1,0 +1,6 @@
+command: ["streamlit", "run", "app.py", "--server.headless", "true"]
+env:
+  - name: SERVING_ENDPOINT
+    valueFrom: serving-endpoint
+  - name: LAKEBASE_ENDPOINT
+    value: "projects/wafer-embeddings/branches/production/endpoints/primary"

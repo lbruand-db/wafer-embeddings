@@ -56,3 +56,8 @@ target-version = ["py311", "py312"]
 
 [tool.ty.environment]
 python-version = "3.11"
+
+[tool.ty.src]
+# app/app.py is Databricks App glue whose deps (streamlit, psycopg) live in app/requirements.txt;
+# its pure helpers (app/wafer_search.py) are type-checked and tested.
+exclude = ["app/app.py"]

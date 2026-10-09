@@ -90,6 +90,7 @@ class PerDieViT(nn.Module):
         vocab_sizes: tuple[int, ...] = (N_STATES,),
         n_bands: int = 6,
         grad_checkpoint: bool = False,
+        pre_norm: bool = False,
     ):
         super().__init__()
         if attention not in ("full", "isab"):
@@ -103,13 +104,15 @@ class PerDieViT(nn.Module):
         self.pos_enc = CoordPositionalEncoding(width, n_bands)
         self.blocks = nn.ModuleList(
             (
-                SAB(width, n_heads)
+                SAB(width, n_heads, pre_norm=pre_norm)
                 if attention == "full"
-                else ISAB(width, n_heads, n_inducing=n_inducing)
+                else ISAB(width, n_heads, n_inducing=n_inducing, pre_norm=pre_norm)
             )
             for _ in range(depth)
         )
-        self.pma = PMA(width, n_heads) if readout == "pma" else None
+        # pre-LN blocks leave the residual stream un-normalized -> final LayerNorm (as ViT)
+        self.final_norm = nn.LayerNorm(width) if pre_norm else None
+        self.pma = PMA(width, n_heads, pre_norm=pre_norm) if readout == "pma" else None
         self.proj = nn.Linear(width, embed_dim)
 
     def forward(
@@ -127,6 +130,8 @@ class PerDieViT(nn.Module):
             else:
                 x = blk(x, mask)
             x = x * mask.unsqueeze(-1)
+        if self.final_norm is not None:
+            x = self.final_norm(x) * mask.unsqueeze(-1)
         if self.readout == "mean":
             denom = mask.sum(dim=1, keepdim=True).clamp(min=1)
             pooled = (x * mask.unsqueeze(-1)).sum(dim=1) / denom

@@ -130,6 +130,7 @@ def random_view(
     cutout_size: float = 0.3,
     token_drop_p: float = 0.0,
     fail_drop_p: float = 0.0,
+    crop_area: tuple[float, float] | None = None,
 ) -> TokenizedWafer:
     """Compose one augmented DINO view (SPECS.md §5).
 
@@ -137,8 +138,15 @@ def random_view(
     cutout always apply; ``token_drop_p`` / ``fail_drop_p`` (off by default) add token
     dropout and FAIL thinning. We deliberately do not chain crop with a coordinate shift
     (crop+shift degraded in WaPIRL, SPECS.md §5).
+
+    Crop size: ``crop_scale`` is a fixed side fraction of the die bounding box.
+    ``crop_area=(lo, hi)`` (DINO's RandomResizedCrop convention) instead draws the window
+    **area** fraction uniformly from ``[lo, hi]`` per view, e.g. (0.4, 1.0) for global and
+    (0.05, 0.4) for local views; it overrides ``crop_scale``.
     """
     coords, state_ids = wafer.coords, wafer.state_ids
+    if crop_area is not None:
+        crop_scale = float(np.sqrt(rng.uniform(*crop_area)))
     coords, state_ids = crop_window(coords, state_ids, crop_scale, rng)
     if orientation_invariant:
         coords = rotate_coords(coords, float(rng.uniform(0, 2 * np.pi)))

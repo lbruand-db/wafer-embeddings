@@ -73,3 +73,30 @@ def test_load_eval_table_test_split_only_when_asked(tmp_path):
     assert set(t.column("split").to_pylist()) == {"test", "train"}
     with pytest.raises(ValueError):
         load_eval_table(dset, 8, seed=0, query_split="val+test")
+
+
+def test_train_recipe_defaults_are_the_previous_behaviour():
+    from wafer_embeddings.jobs.train import _args, train_recipe
+
+    r = train_recipe(_args(["--catalog", "c", "--schema", "s"]))
+    assert r == {"lr": 5e-4, "aug": {"die_noise_p": 0.005}, "weight_decay": None}
+
+
+def test_train_recipe_reference_dino_flags():
+    from wafer_embeddings.jobs.train import _args, train_recipe
+
+    a = _args(
+        "--catalog c --schema s --lr 0 --batch-size 64 --weight-decay 0.04 "
+        "--weight-decay-end 0.4 --n-local 6 --global-crop-area 0.4 1.0 "
+        "--local-crop-area 0.1 0.4 --die-noise 0.03 --pre-norm --bottleneck 256".split()
+    )
+    r = train_recipe(a)
+    assert r["lr"] == 5e-4 * 64 / 256  # linear scaling rule
+    assert r["weight_decay"] == (0.04, 0.4)
+    assert r["aug"] == {
+        "die_noise_p": 0.03,
+        "crop_area": (0.4, 1.0),
+        "n_local": 6,
+        "local_crop_area": (0.1, 0.4),
+    }
+    assert a.pre_norm and a.bottleneck == 256

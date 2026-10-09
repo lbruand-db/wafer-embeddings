@@ -6,10 +6,10 @@ from wafer_embeddings.model.encoder import PerDieViT
 from wafer_embeddings.tokenize import tokenizer as tk
 
 CONFIGS = [
-    dict(attention="full", readout="mean"),
-    dict(attention="full", readout="pma"),
-    dict(attention="isab", readout="mean"),
-    dict(attention="isab", readout="pma"),
+    dict(attention=att, readout=ro, pre_norm=pn)
+    for att in ("full", "isab")
+    for ro in ("mean", "pma")
+    for pn in (False, True)
 ]
 
 
@@ -100,3 +100,13 @@ def test_bad_config_rejected():
         PerDieViT(attention="sparse")
     with pytest.raises(ValueError):
         PerDieViT(readout="max")
+
+
+def test_pre_norm_adds_final_norm_and_trains():
+    post, pre = _small(attention="isab"), _small(attention="isab", pre_norm=True)
+    assert post.final_norm is None and pre.final_norm is not None
+    pre.train()
+    coords, states, mask = _batch([8, 5])
+    pre(coords, states, mask).sum().backward()
+    g = pre.blocks[0].mab0.ln_k.weight.grad  # the key norm is on the gradient path
+    assert g is not None and torch.isfinite(g).all() and g.abs().sum() > 0

@@ -6,6 +6,8 @@ from wafer_embeddings.train.trainer import (
     collapse_stats,
     embed_all,
     fit_dino,
+    param_groups,
+    scaled_lr,
     train_step,
     wafers_from_rows,
 )
@@ -15,6 +17,8 @@ __all__ = [
     "collapse_stats",
     "train_step",
     "fit_dino",
+    "param_groups",
+    "scaled_lr",
     "embed_all",
     "wafers_from_rows",
     "g1_metrics",

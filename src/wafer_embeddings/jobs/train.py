@@ -22,6 +22,8 @@ from wafer_embeddings.train import (
     embed_all,
     fit_dino,
     g1_metrics,
+    param_groups,
+    scaled_lr,
     selection_score,
     stratified_indices,
     wafers_from_rows,
@@ -70,8 +72,39 @@ def _args(argv=None):
     p.add_argument("--heads", type=int, default=6)
     p.add_argument("--attention", default="full", choices=["full", "isab"])
     p.add_argument("--out-dim", type=int, default=1024, help="DINO prototype count.")
-    p.add_argument("--lr", type=float, default=5e-4)
-    p.add_argument("--weight-decay", type=float, default=0.0, help="AdamW weight decay (0 = off).")
+    p.add_argument("--bottleneck", type=int, default=64, help="DINO head bottleneck dim.")
+    p.add_argument(
+        "--pre-norm",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Pre-LN attention blocks + final LayerNorm (ViT/DINO form).",
+    )
+    p.add_argument("--lr", type=float, default=5e-4, help="Peak LR (0 = 5e-4*batch/256 rule).")
+    p.add_argument(
+        "--weight-decay",
+        type=float,
+        default=0.0,
+        help="AdamW weight decay on weights only (biases/norms never decayed; 0 = off).",
+    )
+    p.add_argument(
+        "--weight-decay-end",
+        type=float,
+        default=None,
+        help="If set, cosine weight-decay schedule weight-decay -> this (DINO: 0.04 -> 0.4).",
+    )
+    p.add_argument("--n-local", type=int, default=0, help="DINO local crops per wafer.")
+    p.add_argument(
+        "--global-crop-area",
+        type=float,
+        nargs=2,
+        default=None,
+        metavar=("LO", "HI"),
+        help="Random global-crop area range (DINO: 0.4 1.0); default: fixed 0.9 side.",
+    )
+    p.add_argument(
+        "--local-crop-area", type=float, nargs=2, default=[0.05, 0.4], metavar=("LO", "HI")
+    )
+    p.add_argument("--die-noise", type=float, default=0.005, help="Pass<->fail flip prob.")
     p.add_argument(
         "--freeze-last-frac",
         type=float,
@@ -89,6 +122,25 @@ def _args(argv=None):
     )
     p.add_argument("--seed", type=int, default=0)
     return p.parse_args(argv)
+
+
+def train_recipe(a) -> dict:
+    """Map parsed CLI args to the training recipe (pure, unit-tested).
+
+    Returns ``lr`` (``--lr 0`` -> DINO's ``5e-4 * batch / 256`` rule), ``aug`` (the
+    ``random_view`` / multi-crop knobs for ``fit_dino``) and ``weight_decay`` (a
+    ``(start, end)`` cosine schedule, or None for a constant decay).
+    """
+    aug: dict = {"die_noise_p": a.die_noise}
+    if a.global_crop_area is not None:
+        aug["crop_area"] = tuple(a.global_crop_area)
+    if a.n_local:
+        aug["n_local"] = a.n_local
+        aug["local_crop_area"] = tuple(a.local_crop_area)
+    wd = None
+    if a.weight_decay_end is not None:
+        wd = (a.weight_decay, a.weight_decay_end)
+    return {"lr": a.lr or scaled_lr(a.batch_size), "aug": aug, "weight_decay": wd}
 
 
 def load_train_table(dset, max_train: int, seed: int):
@@ -195,21 +247,28 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
         n_heads=a.heads,
         attention=a.attention,
         grad_checkpoint=a.grad_checkpoint,
+        pre_norm=a.pre_norm,
     )
-    dino = DinoModel(encoder, DINOHead(a.embed_dim, out_dim=a.out_dim)).to(device)
+    head = DINOHead(a.embed_dim, out_dim=a.out_dim, bottleneck=a.bottleneck)
+    dino = DinoModel(encoder, head).to(device)
     loss_fn = DINOLoss(out_dim=a.out_dim).to(device)
+    recipe = train_recipe(a)
+    log.info(f"recipe: {recipe}")
+    # weights decayed, biases / norms not (DINO's param grouping)
     opt = torch.optim.AdamW(
-        list(dino.student_enc.parameters()) + list(dino.student_head.parameters()),
-        lr=a.lr,
+        param_groups(dino.student_enc, dino.student_head),
+        lr=recipe["lr"],
         weight_decay=a.weight_decay,
     )
 
     if a.experiment:
         mlflow.set_experiment(a.experiment)
 
-    def _eval(prefix: str, emb: np.ndarray | None = None) -> dict[str, float]:
+    def _eval(
+        prefix: str, emb: np.ndarray | None = None, which: str = "student"
+    ) -> dict[str, float]:
         if emb is None:
-            emb = embed_all(dino, eval_wafers, device=device)
+            emb = embed_all(dino, eval_wafers, device=device, which=which)
         m = g1_metrics(
             emb, eval_labels, eval_splits, N_CLASSES, class_names=CLASS_NAMES, groups=eval_groups
         )
@@ -254,6 +313,8 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
                 freeze_last_frac=a.freeze_last_frac,
                 warmup_frac=a.warmup_frac,
                 clip_grad=a.clip_grad or None,
+                aug=recipe["aug"],
+                weight_decay=recipe["weight_decay"],
                 log=log.info,
                 log_every=50,
                 monitor=_monitor,
@@ -263,8 +324,11 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
 
         with stage(log, "embed + eval (G1)"):
             metrics = _eval("")
-        mlflow.log_metrics(metrics)
+            # DINO reports the EMA teacher (ref [1]); log it alongside the student
+            teacher = _eval("teacher_", which="teacher")
+        mlflow.log_metrics(metrics | teacher)
         log.info(f"G1 metrics: {metrics}")
+        log.info(f"teacher metrics: {teacher}")
         for k in (
             "knn_acc",
             "knn_macro_recall",
@@ -275,7 +339,8 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
         ):
             log.info(
                 f"{k}: polar={polar.get('polar_' + k)} "
-                f"untrained={baseline.get('untrained_' + k)} trained={metrics.get(k)}"
+                f"untrained={baseline.get('untrained_' + k)} trained={metrics.get(k)} "
+                f"teacher={teacher.get('teacher_' + k)}"
             )
 
         path = "/tmp/wafer_encoder.pt"

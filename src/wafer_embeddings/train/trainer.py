@@ -54,24 +54,51 @@ def build_views(
     n_views: int = 2,
     orientation_invariant: bool = True,
     crop_scale: float = 0.9,
+    n_local: int = 0,
+    local_crop_area: tuple[float, float] = (0.05, 0.4),
     **aug,
 ) -> list[tuple]:
-    """Make ``n_views`` augmented, collated views of a batch of wafers.
+    """Make ``n_views`` global + ``n_local`` local augmented, collated views of a batch.
 
-    Each view is a ``(coords, state_ids, mask)`` tensor triple (DINO multi-crop; the
-    crops double as the variable-size training signal, SPECS.md §5). Extra keyword
-    arguments (e.g. ``token_drop_p``, ``fail_drop_p``) go to ``random_view``.
+    Each view is a ``(coords, state_ids, mask)`` tensor triple. Global views come first
+    (the teacher sees only those); local views are small crops (``local_crop_area`` of the
+    die bounding box, DINO multi-crop, ref [1]) that the student must match to a global
+    view. Extra keyword arguments (e.g. ``crop_area``, ``token_drop_p``) go to
+    ``random_view``; ``crop_area`` applies to global views only.
     """
     views = []
-    for _ in range(n_views):
+    for i in range(n_views + n_local):
+        kw = dict(aug)
+        if i >= n_views:
+            kw["crop_area"] = local_crop_area
         batch = [
             random_view(
-                w, rng, orientation_invariant=orientation_invariant, crop_scale=crop_scale, **aug
+                w, rng, orientation_invariant=orientation_invariant, crop_scale=crop_scale, **kw
             )
             for w in wafers
         ]
         views.append(collate(batch))
     return views
+
+
+def param_groups(*modules) -> list[dict]:
+    """Optimizer param groups as in DINO (ref [1] ``get_params_groups``).
+
+    Weights get weight decay (and are tagged ``wd_schedule`` so ``fit_dino`` can follow
+    the cosine weight-decay schedule); biases and 1-D params (norms) get none.
+    """
+    reg, noreg = [], []
+    for m in modules:
+        for name, p in m.named_parameters():
+            if not p.requires_grad:
+                continue
+            (noreg if name.endswith(".bias") or p.ndim == 1 else reg).append(p)
+    return [{"params": reg, "wd_schedule": True}, {"params": noreg, "weight_decay": 0.0}]
+
+
+def scaled_lr(batch_size: int, base_lr: float = 5e-4) -> float:
+    """DINO's linear LR scaling rule: ``base_lr * batch_size / 256`` (ref [1])."""
+    return base_lr * batch_size / 256.0
 
 
 def collapse_stats(dino, loss_fn, teacher_logits, view) -> dict[str, float]:
@@ -128,8 +155,8 @@ def train_step(
         wafers, rng, n_views=2, orientation_invariant=orientation_invariant, **(aug or {})
     )
     views = _to_device(views, device)
-    student = dino.student_views(views)
-    teacher = dino.teacher_views(views)
+    student = dino.student_views(views)  # all views (global + local)
+    teacher = dino.teacher_views(views[:2])  # global views only (ref [1])
     if stats is not None:
         stats.update(collapse_stats(dino, loss_fn, teacher[0], views[0]))
     loss = loss_fn(student, teacher)
@@ -177,6 +204,7 @@ def fit_dino(
     freeze_last_frac: float = 0.1,
     clip_grad: float | None = None,
     aug: dict | None = None,
+    weight_decay: tuple[float, float] | None = None,
     log: Callable[[str], None] | None = None,
     log_every: int = 50,
     monitor: Callable[[int, dict[str, float]], None] | None = None,
@@ -193,7 +221,10 @@ def fit_dino(
     ``freeze_last_frac``: freeze the prototype layer for the first fraction of steps
     (DINO's stabilizer; prevents the early collapse-and-oscillate on real data).
     ``clip_grad``: global grad-norm clip (None = off). ``aug``: extra ``random_view``
-    keyword arguments, e.g. ``{"token_drop_p": 0.5, "fail_drop_p": 0.4}``.
+    keyword arguments, e.g. ``{"token_drop_p": 0.5, "fail_drop_p": 0.4}``, plus
+    ``n_local`` / ``local_crop_area`` for multi-crop. ``weight_decay=(start, end)``:
+    cosine weight-decay schedule (DINO: 0.04 -> 0.4) on param groups tagged
+    ``wd_schedule`` (see ``param_groups``); None leaves the optimizer's decay alone.
 
     Every ``log_every`` steps, ``collapse_stats`` + grad norm are computed and passed to
     ``monitor(step, stats)`` and the ``log`` line. If ``select_fn`` is given (higher =
@@ -233,6 +264,11 @@ def fit_dino(
         )
         for g in optimizer.param_groups:
             g["lr"] = lr
+        if weight_decay is not None:
+            wd = _cosine(weight_decay[0], weight_decay[1], step / max(steps, 1))
+            for g in optimizer.param_groups:
+                if g.get("wd_schedule"):
+                    g["weight_decay"] = wd
         loss_fn.teacher_temp = tt0 + (tt1 - tt0) * min(step / tt_warmup, 1.0)
         dino.teacher_momentum = _cosine(m0, m1, step / max(steps, 1))
 
@@ -278,9 +314,21 @@ def fit_dino(
 
 
 def embed_all(
-    dino, wafers: list[TokenizedWafer], *, device: str = "cpu", batch_size: int = 256
+    dino,
+    wafers: list[TokenizedWafer],
+    *,
+    device: str = "cpu",
+    batch_size: int = 256,
+    which: str = "student",
 ) -> np.ndarray:
-    """Embed all wafers with the (frozen) student encoder -> (N, D) L2-normalized."""
+    """Embed all wafers with the student or EMA-teacher encoder -> (N, D) L2-normalized.
+
+    DINO evaluates the **teacher** (ref [1]: it outperforms the student throughout
+    training); ``which="teacher"`` gives that.
+    """
+    if which not in ("student", "teacher"):
+        raise ValueError(f"which must be 'student' or 'teacher', got {which!r}")
+    enc = dino.teacher_enc if which == "teacher" else dino.student_enc
     import torch
 
     was_training = dino.training
@@ -291,7 +339,7 @@ def embed_all(
             coords, states, mask = collate(wafers[i : i + batch_size])
             if device != "cpu":
                 coords, states, mask = coords.to(device), states.to(device), mask.to(device)
-            emb = dino.embed(coords, states, mask)
+            emb = enc(coords, states, mask)
             out.append(emb.cpu().numpy())
     dino.train(was_training)
     return np.concatenate(out, axis=0) if out else np.zeros((0, 1), dtype=np.float32)

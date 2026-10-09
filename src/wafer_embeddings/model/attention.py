@@ -12,13 +12,28 @@ import torch.nn as nn
 
 
 class MAB(nn.Module):
-    """Multihead Attention Block: pre-attention queries Q attend to keys K."""
+    """Multihead Attention Block: queries Q attend to keys K.
 
-    def __init__(self, dim: int, n_heads: int, mlp_ratio: float = 4.0, dropout: float = 0.0):
+    ``pre_norm=False`` is the original Set Transformer (post-LN: ``LN(x + f(x))``).
+    ``pre_norm=True`` is the ViT/DINO form (``x + f(LN(x))``, separate norms for queries
+    and keys), which keeps an identity residual path and trains more stably when deep;
+    the encoder then applies a final LayerNorm.
+    """
+
+    def __init__(
+        self,
+        dim: int,
+        n_heads: int,
+        mlp_ratio: float = 4.0,
+        dropout: float = 0.0,
+        pre_norm: bool = False,
+    ):
         super().__init__()
+        self.pre_norm = pre_norm
         self.mha = nn.MultiheadAttention(dim, n_heads, dropout=dropout, batch_first=True)
         self.ln0 = nn.LayerNorm(dim)
         self.ln1 = nn.LayerNorm(dim)
+        self.ln_k = nn.LayerNorm(dim) if pre_norm else None
         hidden = int(dim * mlp_ratio)
         self.ffn = nn.Sequential(nn.Linear(dim, hidden), nn.GELU(), nn.Linear(hidden, dim))
 
@@ -27,6 +42,13 @@ class MAB(nn.Module):
     ) -> torch.Tensor:
         # key_mask: True = valid. MultiheadAttention wants True = ignore.
         kpm = (~key_mask) if key_mask is not None else None
+        if self.pre_norm:
+            assert self.ln_k is not None
+            qn = self.ln0(q)
+            kn = qn if k is q else self.ln_k(k)
+            attn, _ = self.mha(qn, kn, kn, key_padding_mask=kpm, need_weights=False)
+            h = q + attn
+            return h + self.ffn(self.ln1(h))
         attn, _ = self.mha(q, k, k, key_padding_mask=kpm, need_weights=False)
         h = self.ln0(q + attn)
         return self.ln1(h + self.ffn(h))

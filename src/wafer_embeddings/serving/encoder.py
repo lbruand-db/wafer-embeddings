@@ -61,6 +61,13 @@ class WaferEncoder:
         for p in self.model.parameters():  # inference-only, without touching global grad mode
             p.requires_grad_(False)
 
+    @property
+    def n_params(self) -> int:
+        """Total parameter count of the served encoder (frozen at inference, so all)."""
+        from wafer_embeddings.model.encoder import count_parameters
+
+        return count_parameters(self.model)
+
     @classmethod
     def from_checkpoint(cls, path: str, device: str = "cpu") -> WaferEncoder:
         import torch

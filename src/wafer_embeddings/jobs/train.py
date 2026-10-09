@@ -244,7 +244,7 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
     from wafer_embeddings.eval.baselines import polar_fail_embedding
     from wafer_embeddings.eval.metrics import effective_rank, rankme
     from wafer_embeddings.model.dino import DinoModel, DINOHead, DINOLoss
-    from wafer_embeddings.model.encoder import PerDieViT
+    from wafer_embeddings.model.encoder import PerDieViT, count_parameters
 
     a = _args(argv)
     log = get_logger("wafer_embeddings.train")
@@ -346,7 +346,16 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
 
     split = a.eval_split
     with mlflow.start_run(run_name=a.run_name):
-        mlflow.log_params(vars(a) | {"device": device, "n_classes": N_CLASSES})
+        mlflow.log_params(
+            vars(a)
+            | {
+                "device": device,
+                "n_classes": N_CLASSES,
+                # the served artifact is the encoder; the DINO head is training-only
+                "n_params": count_parameters(encoder),
+                "head_n_params": count_parameters(head),
+            }
+        )
         # AI Runtime may hand the job a pre-created run; the tag renames it either way
         mlflow.set_tags({"mlflow.runName": a.run_name, "eval_split": split, "recipe": str(recipe)})
         # Same eval maps, freshly initialized encoder: the bar training must beat. It is

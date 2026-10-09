@@ -195,3 +195,14 @@ def test_embed_parquet_streams_files(tmp_path):
     assert n == 7 and len(list((tmp_path / "out").glob("part-*.parquet"))) == 3  # 3+3+1
     assert tuple(out.columns) == OUTPUT_COLUMNS
     np.testing.assert_allclose(np.array(out["embedding"].tolist()), enc.embed_maps(maps), atol=1e-6)
+
+
+def test_n_params_counts_every_encoder_weight():
+    from wafer_embeddings.model.encoder import count_parameters
+
+    enc, model = _encoder()
+    expected = sum(p.numel() for p in model.parameters())
+    assert enc.n_params == expected == count_parameters(model) > 0
+    # inference freezes the weights; the total still counts them, trainable-only does not
+    assert count_parameters(enc.model, trainable_only=True) == 0
+    assert count_parameters(enc.model) == expected

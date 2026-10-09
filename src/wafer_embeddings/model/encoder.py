@@ -20,6 +20,11 @@ from wafer_embeddings.model.attention import ISAB, PMA, SAB
 from wafer_embeddings.tokenize.tokenizer import N_STATES
 
 
+def count_parameters(module: nn.Module, trainable_only: bool = False) -> int:
+    """Number of scalar parameters in ``module`` (all, or only ``requires_grad`` ones)."""
+    return sum(p.numel() for p in module.parameters() if p.requires_grad or not trainable_only)
+
+
 class CoordPositionalEncoding(nn.Module):
     """Fourier features of (u, v) + raw (u, v, r), projected to ``dim``.
 

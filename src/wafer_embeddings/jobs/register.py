@@ -77,7 +77,12 @@ def main(argv=None) -> None:  # pragma: no cover - needs a workspace
     metrics = json.load(open(a.metrics_json)) if a.metrics_json else {}
     with mlflow.start_run(run_name=f"register-{a.name}") as run:
         mlflow.log_params(
-            {"source_run_id": a.run_id or "", "embed_dim": enc.dim, "max_tokens": enc.max_tokens}
+            {
+                "source_run_id": a.run_id or "",
+                "embed_dim": enc.dim,
+                "max_tokens": enc.max_tokens,
+                "n_params": enc.n_params,
+            }
             | {
                 f"arch_{k}": v
                 for k, v in enc.config.items()
@@ -106,7 +111,12 @@ def main(argv=None) -> None:  # pragma: no cover - needs a workspace
     client = mlflow.MlflowClient()
     version = info.registered_model_version
     client.set_registered_model_alias(fqn, a.alias, version)
-    tags = {"source_run_id": a.run_id or "", "embed_dim": str(enc.dim), "gate": "G1-provisional"}
+    tags = {
+        "source_run_id": a.run_id or "",
+        "embed_dim": str(enc.dim),
+        "n_params": str(enc.n_params),
+        "gate": "G1-provisional",
+    }
     trained = metrics.get("trained", {}) if isinstance(metrics, dict) else {}
     for k in ("xgroup_knn_macro_recall", "xgroup_precision@10", "map@10", "cluster_nmi"):
         if k in trained:

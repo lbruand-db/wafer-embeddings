@@ -236,7 +236,8 @@ def fit_dino(
     chosen step is reported to ``monitor`` as ``best_step`` / ``best_score``.
 
     ``track_fn(step)`` is a log-only hook called before training and every
-    ``track_every`` steps (and at the end), e.g. to record val metrics over training. It
+    ``track_every`` steps, e.g. to record val metrics over training. Its last call (at
+    ``steps``) comes after any keep-best restore, so it describes the returned weights. It
     never changes the weights, so no label it looks at can steer training.
     """
     n = len(wafers)
@@ -311,7 +312,7 @@ def fit_dino(
                 )
         if select_fn is not None and select_every and (step % select_every == 0 or step == steps):
             _select(step)
-        if track_fn is not None and track_every and (step % track_every == 0 or step == steps):
+        if track_fn is not None and track_every and step % track_every == 0 and step < steps:
             track_fn(step)
     if best is not None:
         score, best_step, snap = best
@@ -320,6 +321,8 @@ def fit_dino(
             log(f"restored best weights from step {best_step} (select_score={score:.4f})")
         if monitor is not None:
             monitor(steps, {"best_step": float(best_step), "best_score": score})
+    if track_fn is not None and track_every:
+        track_fn(steps)  # after any restore: the last point describes the returned weights
     return losses
 
 

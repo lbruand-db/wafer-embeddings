@@ -135,11 +135,19 @@ def test_embed_all_teacher_vs_student():
 
 
 def test_fit_dino_track_fn_is_log_only():
+    # the real job's tracker embeds with student AND teacher (eval/train toggling,
+    # forward passes); training must stay bit-identical to an untracked run
     wafers = [_square(10) for _ in range(4)]
     seen: list[int] = []
 
     def run(track: bool):
         dino = _tiny_dino()
+
+        def tracker(step: int) -> None:
+            seen.append(step)
+            embed_all(dino, wafers)
+            embed_all(dino, wafers, which="teacher")
+
         opt = torch.optim.SGD(param_groups(dino.student_enc, dino.student_head), lr=0.1)
         fit_dino(
             dino,
@@ -149,12 +157,50 @@ def test_fit_dino_track_fn_is_log_only():
             steps=5,
             batch_size=2,
             rng=np.random.default_rng(0),
-            track_fn=seen.append if track else None,
+            track_fn=tracker if track else None,
             track_every=2 if track else 0,
         )
+        assert dino.training  # embed_all restores train mode
         return dino
 
     plain, tracked = run(False), run(True)
     assert seen == [0, 2, 4, 5]  # start, every 2 steps, and the end
     for pa, pb in zip(plain.parameters(), tracked.parameters()):
         assert torch.equal(pa, pb)  # tracking never changes training
+
+
+def test_fit_dino_last_track_point_describes_restored_weights():
+    # keep-best picks step 1; the final track call must see the restored weights
+    wafers = [_square(10) for _ in range(4)]
+    dino = _tiny_dino()
+
+    def flat() -> torch.Tensor:
+        return torch.cat([v.flatten() for v in dino.student_enc.state_dict().values()]).clone()
+
+    selected: list[torch.Tensor] = []
+    tracked: dict[int, torch.Tensor] = {}
+    scores = iter([0.0, 1.0, 0.5, 0.2])  # select at steps 0, 1, 2, 3 -> best = 1
+
+    def select() -> float:
+        selected.append(flat())
+        return next(scores)
+
+    def tracker(step: int) -> None:
+        tracked[step] = flat()
+
+    opt = torch.optim.SGD(param_groups(dino.student_enc, dino.student_head), lr=0.5)
+    fit_dino(
+        dino,
+        DINOLoss(64),
+        opt,
+        wafers,
+        steps=3,
+        batch_size=2,
+        rng=np.random.default_rng(0),
+        select_fn=select,
+        select_every=1,
+        track_fn=tracker,
+        track_every=1,
+    )
+    assert torch.equal(tracked[3], selected[1])  # the restored step-1 weights
+    assert not torch.equal(tracked[2], selected[1])  # mid-run points are the live weights

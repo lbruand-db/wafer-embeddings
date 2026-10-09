@@ -100,3 +100,17 @@ def test_train_recipe_reference_dino_flags():
         "local_crop_area": (0.1, 0.4),
     }
     assert a.pre_norm and a.bottleneck == 256
+
+
+def test_track_every_is_validated():
+    import pytest
+
+    from wafer_embeddings.jobs.train import _args
+
+    base = ["--catalog", "c", "--schema", "s"]
+    assert _args(base + ["--track-every", "100"]).track_every == 100
+    with pytest.raises(SystemExit):
+        _args(base + ["--track-every", "-3"])
+    with pytest.raises(SystemExit):  # no training curve on the test split
+        _args(base + ["--track-every", "100", "--eval-split", "test"])
+    assert _args(base + ["--eval-split", "test"]).track_every == 0  # final report is fine

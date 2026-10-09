@@ -62,13 +62,16 @@ env_variables:
   EMBED_DIM: "384"
   HEADS: "6"
   # Any other jobs/train.py flags (recipe knobs: --n-local, --global-crop-area LO HI,
-  # --weight-decay-end, --pre-norm, --bottleneck, --die-noise, ...). Word-split on purpose.
+  # --weight-decay-end, --pre-norm, --bottleneck, --die-noise, ...). Word-split on purpose
+  # (globbing is disabled in the command). Appended last, so a flag repeated here wins
+  # over the named variables above (argparse keeps the last value) - don't repeat them.
   EXTRA_ARGS: ""
   # ISAB (O(N*m)) is the default: WM-811K has large variable-size maps for which
   # full O(N^2) attention OOMs an A10 (SPECS.md §4 / de-risking R3).
   ATTENTION: "isab"
 
 command: |
+  set -f  # EXTRA_ARGS is word-split but must never glob-expand
   PYTHONPATH="$CODE_SOURCE_PATH" python -m wafer_embeddings.jobs.train \
     --catalog mmf_mlops_demo_catalog --schema wafer_embeddings \
     --max-train "$MAX_TRAIN" --eval-cap "$EVAL_CAP" --steps "$STEPS" \

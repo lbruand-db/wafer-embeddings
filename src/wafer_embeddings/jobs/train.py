@@ -127,7 +127,13 @@ def _args(argv=None):
         help="Log student+teacher eval metrics every N steps (log-only; 0 = off).",
     )
     p.add_argument("--seed", type=int, default=0)
-    return p.parse_args(argv)
+    a = p.parse_args(argv)
+    if a.track_every < 0:
+        p.error("--track-every must be >= 0")
+    if a.track_every and a.eval_split == "test":
+        # a training curve on test invites tuning on it; test is scored once, at the end
+        p.error("--track-every is development-only; not allowed with --eval-split test")
+    return a
 
 
 def train_recipe(a) -> dict:
@@ -170,9 +176,11 @@ def load_train_table(dset, max_train: int, seed: int):
 
 
 EVAL_SPLITS = ("val", "test")
-TRACK_KEYS = (
+# Headline metrics: tracked during training and compared in the final report.
+HEADLINE_KEYS = (
     "xgroup_knn_macro_recall",
     "xgroup_precision@10",
+    "knn_acc",
     "knn_macro_recall",
     "map@10",
     "cluster_nmi",
@@ -297,11 +305,12 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
         return selection_score(emb, eval_labels[bank], N_CLASSES, groups=eval_groups[bank])
 
     def _track(step: int) -> None:
-        keys = TRACK_KEYS
         for which in ("student", "teacher"):
             m = _eval("", which=which)
-            mlflow.log_metrics({f"track/{which}/{k}": m[k] for k in keys if k in m}, step=step)
-            log.info(f"track step {step} {which}: " + str({k: round(m[k], 4) for k in keys}))
+            # g1_metrics omits a metric it can't compute (e.g. too few queries): skip it
+            got = {k: m[k] for k in HEADLINE_KEYS if k in m}
+            mlflow.log_metrics({f"track/{which}/{k}": v for k, v in got.items()}, step=step)
+            log.info(f"track step {step} {which}: " + str({k: round(v, 4) for k, v in got.items()}))
 
     def _monitor(step: int, stats: dict[str, float]) -> None:
         stats = {("dino_loss" if k == "loss" else k): v for k, v in stats.items()}
@@ -351,14 +360,7 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
         mlflow.log_metrics(metrics | teacher)
         log.info(f"G1 metrics: {metrics}")
         log.info(f"teacher metrics: {teacher}")
-        for k in (
-            "knn_acc",
-            "knn_macro_recall",
-            "map@10",
-            "cluster_nmi",
-            "xgroup_knn_macro_recall",
-            "xgroup_precision@10",
-        ):
+        for k in HEADLINE_KEYS:
             log.info(
                 f"{k}: polar={polar.get('polar_' + k)} "
                 f"untrained={baseline.get('untrained_' + k)} trained={metrics.get(k)} "

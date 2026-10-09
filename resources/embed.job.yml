@@ -3,20 +3,19 @@ resources:
     embed:
       name: wafer-embeddings-embed
       description: >-
-        Batch-embed every wafer map with the UC encoder (alias @champion) into the Delta
-        table wafer_map_embeddings (change data feed on, for the Lakebase sync). SPECS.md §10.
+        Load the batch embeddings (written to the volume by ai_runtime/embed.yaml with the
+        UC encoder @champion) into the Delta table wafer_map_embeddings, change data feed
+        on, for the Lakebase synced table. SPECS.md §10.
       tasks:
         - task_key: embed
           python_wheel_task:
             package_name: wafer_embeddings
-            entry_point: wafer-embed
+            entry_point: wafer-embed-load
             parameters:
               - "--catalog"
               - "${var.catalog}"
               - "--schema"
               - "${var.schema}"
-              - "--alias"
-              - "champion"
           environment_key: default
       environments:
         - environment_key: default
@@ -24,8 +23,3 @@ resources:
             environment_version: "${var.serverless_environment_version}"
             dependencies:
               - ../dist/*.whl
-              - torch
-              - mlflow>=3.12
-              - boto3
-              - pandas
-              - pyarrow

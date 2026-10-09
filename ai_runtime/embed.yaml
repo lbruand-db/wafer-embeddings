@@ -1,0 +1,42 @@
+# Batch-embed all wafer maps with the UC encoder (@champion) on AI Runtime (SPECS.md §10).
+# Serverless Spark Python workers OOM importing CUDA torch, so the heavy step runs here
+# (proven torch env, GPU) and writes parquet to the volume; the bundle job `embed`
+# (wafer-embed-load) then loads it into Delta with change data feed on.
+#
+# Run:   databricks air run --file ai_runtime/embed.yaml --profile mmf
+# Smoke: ... --override env_variables.LIMIT=2000 --override env_variables.OUT=wafer_map_embeddings_smoke_parquet
+
+experiment_name: wafer-embeddings
+mlflow_experiment_directory: /Workspace/Users/lucas.bruand@databricks.com
+mlflow_run_name: embed
+
+compute:
+  accelerator_type: GPU_1xA10
+  num_accelerators: 1
+
+max_retries: 0
+
+environment:
+  version: "6"
+  dependencies:
+    - torch
+    - mlflow
+    - boto3
+    - pandas
+    - pyarrow
+
+code_source:
+  type: snapshot
+  snapshot:
+    root_path: ../src
+    remote_volume: /Volumes/mmf_mlops_demo_catalog/wafer_embeddings/raw
+
+env_variables:
+  ALIAS: "champion"
+  LIMIT: "0" # rows to embed (0 = all)
+  OUT: "wafer_map_embeddings_parquet" # volume subdir for the parquet output
+
+command: |
+  PYTHONPATH="$CODE_SOURCE_PATH" python -c "from wafer_embeddings.jobs.embed import main_volume; main_volume()" \
+    --catalog mmf_mlops_demo_catalog --schema wafer_embeddings \
+    --alias "$ALIAS" --limit "$LIMIT" --out "$OUT"

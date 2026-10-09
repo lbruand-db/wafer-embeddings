@@ -67,6 +67,34 @@ def embed_frames(frames: Iterator, encoder, model_version: str, batch_size: int 
         )
 
 
+def embed_parquet(
+    dset, encoder, out_dir: str, model_version: str, rows_per_file: int = 8192, log=None
+) -> int:
+    """Embed a pyarrow dataset of wafer rows into parquet files under ``out_dir``.
+
+    Streams record batches (bounded memory) through :func:`embed_frames` and writes one
+    ``part-NNNNN.parquet`` per batch; returns the number of rows written.
+    """
+    import os
+
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    os.makedirs(out_dir, exist_ok=True)
+    cols = ["id", "height", "width", "wafer_map", "label", "label_id", "split", "lot"]
+    n = 0
+    for i, batch in enumerate(dset.to_batches(columns=cols, batch_size=rows_per_file)):
+        (frame,) = list(embed_frames(iter([batch.to_pandas()]), encoder, model_version))
+        pq.write_table(
+            pa.Table.from_pandas(frame, preserve_index=False),
+            os.path.join(out_dir, f"part-{i:05d}.parquet"),
+        )
+        n += len(frame)
+        if log is not None:
+            log(f"embedded {n} rows")
+    return n
+
+
 def _args(argv=None):
     p = argparse.ArgumentParser(description="Batch-embed wafer maps with the UC encoder.")
     p.add_argument("--catalog", required=True)
@@ -77,13 +105,77 @@ def _args(argv=None):
     p.add_argument("--alias", default="champion")
     p.add_argument("--partitions", type=int, default=64)
     p.add_argument("--limit", type=int, default=0, help="Rows to embed (0 = all).")
+    p.add_argument("--volume", default="raw")
+    p.add_argument("--out", default="wafer_map_embeddings_parquet", help="Volume subdir.")
     return p.parse_args(argv)
 
 
-def main(argv=None) -> None:  # pragma: no cover - needs Spark + UC
+def _resolve_checkpoint(catalog: str, schema: str, model: str, alias: str):
+    """(version, local checkpoint path) of ``<catalog>.<schema>.<model>@<alias>``."""
     import glob
 
     import mlflow  # ty: ignore[unresolved-import]
+
+    mlflow.set_registry_uri("databricks-uc")
+    fqn = f"{catalog}.{schema}.{model}"
+    version = mlflow.MlflowClient().get_model_version_by_alias(fqn, alias).version
+    local = mlflow.artifacts.download_artifacts(f"models:/{fqn}/{version}")
+    (ckpt,) = glob.glob(f"{local}/**/*.pt", recursive=True)
+    return str(version), ckpt
+
+
+def main_volume(argv=None) -> None:  # pragma: no cover - runs on AI Runtime (GPU)
+    """Embed the volume's parquet export -> parquet on the volume (no Spark).
+
+    Serverless Spark Python workers run out of memory importing CUDA torch, so the heavy
+    step runs on AI Runtime (proven torch env, GPU); ``main_load`` then loads the result
+    into Delta.
+    """
+    import pyarrow.dataset as ds
+    import torch
+
+    from wafer_embeddings.obs import get_logger, stage
+    from wafer_embeddings.serving.encoder import WaferEncoder
+
+    a = _args(argv)
+    log = get_logger("wafer_embeddings.embed")
+    version, ckpt = _resolve_checkpoint(a.catalog, a.schema, a.model, a.alias)
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    enc = WaferEncoder.from_checkpoint(ckpt, device=device)
+    vol = f"/Volumes/{a.catalog}/{a.schema}/{a.volume}"
+    dset = ds.dataset(f"{vol}/wafer_maps_parquet", format="parquet")
+    if a.limit:
+        dset = ds.dataset(dset.head(a.limit))
+    out = f"{vol}/{a.out}"
+    with stage(log, f"embed with {a.model} v{version} on {device} -> {out}"):
+        n = embed_parquet(dset, enc, out, version, log=log.info)
+    log.info(f"wrote {n} embeddings to {out}")
+
+
+def main_load(argv=None) -> None:  # pragma: no cover - needs Spark
+    """Load the embedded parquet from the volume into Delta (change data feed on)."""
+    from databricks.sdk.runtime import spark  # type: ignore
+
+    from wafer_embeddings.obs import get_logger
+
+    a = _args(argv)
+    log = get_logger("wafer_embeddings.embed")
+    src = f"/Volumes/{a.catalog}/{a.schema}/{a.volume}/{a.out}"
+    target = f"{a.catalog}.{a.schema}.{a.target}"
+    df = spark.read.parquet(src)
+    (
+        df.write.mode("overwrite")
+        .option("overwriteSchema", "true")
+        .option("delta.enableChangeDataFeed", "true")
+        .saveAsTable(target)
+    )
+    spark.sql(f"ALTER TABLE {target} SET TBLPROPERTIES (delta.enableChangeDataFeed = true)")
+    log.info(f"loaded {spark.read.table(target).count()} rows from {src} into {target}")
+
+
+def main(argv=None) -> None:  # pragma: no cover - needs Spark + UC
+    """In-Spark embedding (mapInPandas). Needs Python workers with room for torch; on
+    serverless they OOM importing CUDA torch, so prefer ``main_volume`` + ``main_load``."""
     from databricks.sdk.runtime import spark  # type: ignore
     from pyspark.sql import types as T  # ty: ignore[unresolved-import]
 
@@ -91,12 +183,8 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark + UC
 
     a = _args(argv)
     log = get_logger("wafer_embeddings.embed")
-    mlflow.set_registry_uri("databricks-uc")
-    fqn_model = f"{a.catalog}.{a.schema}.{a.model}"
-    version = mlflow.MlflowClient().get_model_version_by_alias(fqn_model, a.alias).version
-    with stage(log, f"download {fqn_model} v{version}"):
-        local = mlflow.artifacts.download_artifacts(f"models:/{fqn_model}/{version}")
-        (ckpt,) = glob.glob(f"{local}/**/*.pt", recursive=True)
+    with stage(log, f"resolve {a.model}@{a.alias}"):
+        version, ckpt = _resolve_checkpoint(a.catalog, a.schema, a.model, a.alias)
         ckpt_bytes = open(ckpt, "rb").read()  # shipped to executors in the UDF closure
     log.info(f"checkpoint {len(ckpt_bytes) / 1e6:.1f} MB from {ckpt}")
 

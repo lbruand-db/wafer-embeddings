@@ -164,3 +164,34 @@ def test_embed_frames_rows_match_encoder_and_metadata():
         12,
         13,
     ]
+
+
+def test_embed_parquet_streams_files(tmp_path):
+    import pyarrow as pa
+    import pyarrow.dataset as ds
+    import pyarrow.parquet as pq
+
+    from wafer_embeddings.jobs.embed import OUTPUT_COLUMNS, embed_parquet
+
+    enc, _ = _encoder()
+    maps = [_map(i, 8, 9) for i in range(7)]
+    tbl = pa.table(
+        {
+            "id": list(range(7)),
+            "height": [8] * 7,
+            "width": [9] * 7,
+            "wafer_map": [m.reshape(-1).tolist() for m in maps],
+            "label": ["Loc"] * 7,
+            "label_id": [4] * 7,
+            "split": ["test"] * 7,
+            "lot": ["l"] * 7,
+        }
+    )
+    src = tmp_path / "src"
+    src.mkdir()
+    pq.write_table(tbl, src / "a.parquet")
+    n = embed_parquet(ds.dataset(str(src)), enc, str(tmp_path / "out"), "2", rows_per_file=3)
+    out = ds.dataset(str(tmp_path / "out")).to_table().to_pandas().sort_values("id")
+    assert n == 7 and len(list((tmp_path / "out").glob("part-*.parquet"))) == 3  # 3+3+1
+    assert tuple(out.columns) == OUTPUT_COLUMNS
+    np.testing.assert_allclose(np.array(out["embedding"].tolist()), enc.embed_maps(maps), atol=1e-6)

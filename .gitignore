@@ -28,3 +28,9 @@ __pycache__/
 
 # local MLflow tracking store created by mlflow client calls
 mlflow.db
+
+# Vue app build artefacts (rebuilt by Databricks Apps from app/package.json)
+app/node_modules/
+app/frontend/dist/
+# lockfile would pin internal npm-proxy URLs; Apps resolves from public npm
+app/package-lock.json

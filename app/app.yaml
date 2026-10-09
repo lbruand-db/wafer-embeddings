@@ -1,6 +1,9 @@
-command: ["streamlit", "run", "app.py", "--server.headless", "true"]
+# FastAPI serves the JSON API + the Vue build (npm run build -> frontend/dist).
+command: ["python", "server.py"]
 env:
   - name: SERVING_ENDPOINT
     valueFrom: serving-endpoint
   - name: LAKEBASE_ENDPOINT
     value: "projects/wafer-embeddings/branches/production/endpoints/primary"
+  - name: PG_TABLE
+    value: "wafer_embeddings.wafer_map_embeddings_pg"

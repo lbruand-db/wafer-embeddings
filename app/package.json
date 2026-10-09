@@ -1,0 +1,20 @@
+{
+  "name": "wafer-search",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Vue 3 frontend for wafer-map similarity search (built by Databricks Apps; served by server.py).",
+  "scripts": {
+    "build": "vite build frontend",
+    "dev": "vite frontend",
+    "test": "node --test frontend/src/"
+  },
+  "dependencies": {
+    "vue": "3.5.43",
+    "vite": "7.3.5",
+    "@vitejs/plugin-vue": "6.0.9"
+  },
+  "overrides": {
+    "rollup": "4.59.1"
+  }
+}

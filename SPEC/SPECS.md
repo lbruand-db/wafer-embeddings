@@ -401,7 +401,19 @@ of the embedding space colored by label; nearest-neighbor montages for pattern d
 ## 9. Lakebase Search integration
 
 Use **Lakebase Search** (the `lakebase_vector` extension + `lakebase_ann` index) —
-**not** raw pgvector.
+**not** raw pgvector. `CREATE EXTENSION lakebase_vector CASCADE` brings the `vector` *type*
+as its own dependency; pgvector is never installed or indexed directly, and all similarity
+search goes through `lakebase_ann`.
+
+**Automation (verified 2026-10-09, `jobs/lakebase.py`, bootstrap job task `lakebase`):**
+fully automatic and idempotent — project (Lakebase Autoscaling, PG 17) → enable Lakebase
+Search via `POST /api/2.0/postgres/projects/{project}/search-extensions` (body `{}`, a
+long-running operation; the call behind the UI button, found with Chrome DevTools;
+re-posting returns `done`) → database → extension → UC synced table (Delta →
+`vector(dim)`, snapshot; `--refresh` re-snapshots after re-embedding) → cosine
+`lakebase_ann` index → app service-principal grants → verify the top-k plan is an ANN
+index scan. Proven on the live project and on a fresh throwaway project from nothing.
+Top-k query latency through the app's SQL: ~40–120 ms at 696,599 rows (vs ~450 ms exact).
 
 - Lakebase instance: `wafer-embeddings`; database `wafer_embeddings`.
 - Table `wafer_embeddings(id bigint pk, labels …, embedding vector(384))`, populated by
@@ -528,8 +540,9 @@ create and wire everything, **idempotently** (safe to re-run):
    exists today out-of-band — the bundle still declares it so a clean workspace reproduces).
 2. **Ingest WM-811K** from `LSWMD.pkl` in the volume: stream → clean → dedup → split →
    Delta, plus a parquet export for the AI Runtime trainer (§7, §11.3).
-3. **Provision the Lakebase instance** (`database create-database-instance`, Public Preview),
-   enable Lakebase Search, create the synced table + `lakebase_ann` index.
+3. **Provision Lakebase** (bootstrap job task `lakebase`, `jobs/lakebase.py`): project,
+   Lakebase Search (REST `search-extensions`), database, `lakebase_vector`, synced table +
+   `lakebase_ann` index + app grants (the embed job re-runs it with `--refresh`).
 4. **Train → register → serve** (train on AI Runtime, register to UC, create the endpoint).
 Expose one-shot **`bundle deploy` + bootstrap** and a **teardown** target. **Pin
 everything** — a modern serverless `environment_version` and all deps — because the

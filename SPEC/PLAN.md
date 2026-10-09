@@ -165,15 +165,15 @@ polar 0.442 / 0.359; beats polar on map@10 0.346 vs 0.315) to prove the full sta
   embedding OOMs on serverless Python workers importing CUDA torch.)
 - ✅ **Lakebase**: project `wafer-embeddings` (PG 17), database `wafer_embeddings`; UC
   synced table → Postgres `wafer_embeddings.wafer_map_embeddings_pg` (`vector(128)`).
-- ⏳ **Lakebase Search index**: `jobs/lakebase.py` builds the cosine `lakebase_ann` index
-  once Lakebase Search is enabled on the project (UI-only today — the one manual step).
-  Until then queries use pgvector exact scan (~450 ms at 700K rows).
+- ✅ **Lakebase Search index**: cosine `lakebase_ann` (2,919 IVF lists); app top-k ~40–120 ms.
 - ✅ **Databricks App** `wafer-search` (bundle `resources/app.yml`): pick a wafer, see its
   map, top-k neighbours (optionally from other lots), optional live re-embedding via the
   endpoint.
-- Not yet N7-clean: Lakebase project / database / synced table / pgvector / grants were
-  created via CLI + SQL (to be folded into a bootstrap step); no `CREATE CATALOG` on the
-  metastore, so the database isn't registered as its own UC catalog.
+- ✅ **N7 for Lakebase**: the bootstrap job's `lakebase` task does project → Search
+  (REST `search-extensions`, found via DevTools) → database → `lakebase_vector` →
+  synced table → index → grants → plan check, idempotently; proven on a fresh project.
+  No direct pgvector. Remaining gaps: model registration runs locally (`jobs/register.py`),
+  and there's no `CREATE CATALOG` on the metastore (synced table lives in the main catalog).
 
 ### P3 — R4 + R5: Training-at-scale + model serving on the platform
 - **AI Runtime training path (§16 16):** ✅ **done** — `train` runs reproducibly via

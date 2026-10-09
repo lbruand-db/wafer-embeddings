@@ -363,6 +363,13 @@ vs. last-4-CLS concat vs. backbone output — these differ in DINO) [1].
   device proxy). Exclude test wafers from DINO pretraining for an **inductive** read
   (also report transductive). WM-811K contains genuine duplicate maps, so content-hash
   **dedup** (696,599 unique of 811,457) runs before splitting.
+- **Label protocol:** labels are **evaluation-only**; no label enters training (sampling,
+  loss, weighting, or checkpointing; keep-best selection is off by default). All
+  development decisions (ablations, hyperparameters, recipe choices) are judged on
+  **val**-split queries against a train-split labeled kNN bank (`--eval-split val`, the
+  default). The **test** split is scored **once**, for the final report
+  (`--eval-split test`), and never used to tune. (Results before 2026-10-09 pooled
+  val+test queries and predate the lot split, so they are superseded.)
 - **Training-free bar:** every run also scores a handcrafted rotation-invariant polar
   FAIL-density histogram (`eval/baselines.py`, `polar_*` metrics). A learned encoder is
   only useful if it beats this, especially on the cross-device metrics.

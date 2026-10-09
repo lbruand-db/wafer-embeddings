@@ -58,7 +58,18 @@ def test_load_eval_table_stratified_and_split_separated(tmp_path):
     labels = np.array(t.column("label_id").to_pylist())
     splits = np.array(t.column("split").to_pylist())
     assert (labels >= 0).all()  # labeled only
-    queries = np.isin(splits, ["val", "test"])
+    assert set(splits) == {"val", "train"}  # development protocol: test never loaded
+    queries = splits == "val"
     assert queries.sum() == 12 and (splits == "train").sum() == 12  # eval_cap per side
     counts = np.bincount(labels[queries], minlength=3)
     assert int(np.max(counts)) - int(np.min(counts)) <= 1  # balanced across the 3 classes
+
+
+def test_load_eval_table_test_split_only_when_asked(tmp_path):
+    import pytest
+
+    dset, _ = _write_parts(tmp_path)
+    t = load_eval_table(dset, 8, seed=0, query_split="test")
+    assert set(t.column("split").to_pylist()) == {"test", "train"}
+    with pytest.raises(ValueError):
+        load_eval_table(dset, 8, seed=0, query_split="val+test")

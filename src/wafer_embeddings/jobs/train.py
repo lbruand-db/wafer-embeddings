@@ -50,6 +50,12 @@ def _args(argv=None):
         choices=["balanced", "proportional"],
         help="Class-stratified eval sample: equal per class, or proportional to frequency.",
     )
+    p.add_argument(
+        "--eval-split",
+        default="val",
+        choices=list(EVAL_SPLITS),
+        help="Query split: 'val' for development; 'test' only for the final report.",
+    )
     p.add_argument("--max-tokens", type=int, default=4096, help="Cap dies/wafer (GPU mem).")
     p.add_argument(
         "--grad-checkpoint",
@@ -77,9 +83,9 @@ def _args(argv=None):
     p.add_argument(
         "--select-every",
         type=int,
-        default=200,
-        help="Score a checkpoint on the train-side kNN bank every N steps and keep the best "
-        "(0 = keep the final weights).",
+        default=0,
+        help="Score a checkpoint on the train-side labeled kNN bank every N steps and keep "
+        "the best (0 = off: train for a fixed schedule, no labels anywhere in training).",
     )
     p.add_argument("--seed", type=int, default=0)
     return p.parse_args(argv)
@@ -105,23 +111,32 @@ def load_train_table(dset, max_train: int, seed: int):
     return dset.to_table(filter=train & ds.field("id").isin(ids.tolist()))
 
 
-def load_eval_table(dset, eval_cap: int, seed: int, balanced: bool = True):
+EVAL_SPLITS = ("val", "test")
+
+
+def load_eval_table(
+    dset, eval_cap: int, seed: int, balanced: bool = True, query_split: str = "val"
+):
     """Seeded, class-stratified labeled eval sample from a pyarrow dataset.
 
-    Queries come from labeled val/test maps, the kNN bank from labeled train maps,
-    ``eval_cap`` of each. Only the small id/label/split columns are read for the full
+    Queries come from labeled maps of ``query_split`` only, the kNN bank from labeled
+    train maps, ``eval_cap`` of each. Protocol (SPECS.md §8.7): develop on ``"val"``;
+    ``"test"`` is touched once, for the final report, so test labels never steer design
+    choices. Only the small id/label/split columns are read for the full
     labeled set; wafer maps are fetched just for the sampled ids. The dedicated RNG
     keeps the eval set identical across runs with the same seed, so runs are comparable.
     """
     import pyarrow.dataset as ds
 
+    if query_split not in EVAL_SPLITS:
+        raise ValueError(f"query_split must be one of {EVAL_SPLITS}, got {query_split!r}")
     meta = dset.to_table(columns=["id", "label_id", "split"], filter=ds.field("label_id") >= 0)
     ids = meta.column("id").to_numpy()
     labels = meta.column("label_id").to_numpy()
     splits = np.array(meta.column("split").to_pylist(), dtype=object)
     rng = np.random.default_rng(seed)
     picked = []
-    for side in (np.isin(splits, ["val", "test"]), splits == "train"):
+    for side in (splits == query_split, splits == "train"):
         pos = stratified_indices(labels[side], eval_cap, rng, balanced=balanced)
         picked.append(ids[side][pos])
     want = np.concatenate(picked).tolist()
@@ -152,16 +167,24 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
     with stage(log, "load train split (seeded random sample)"):
         tbl = load_train_table(dset, a.max_train, a.seed)
         train_wafers, _, _ = wafers_from_rows(tbl.to_pylist(), max_tokens=a.max_tokens, rng=rng)
-    with stage(log, f"load labeled eval ({a.eval_sampling} stratified sample)"):
-        tbl = load_eval_table(dset, a.eval_cap, a.seed, balanced=a.eval_sampling == "balanced")
+    if a.eval_split == "test":
+        log.warning("EVAL ON TEST SPLIT: final report only - do not tune on these numbers")
+    with stage(log, f"load labeled eval ({a.eval_split} queries, {a.eval_sampling} sample)"):
+        tbl = load_eval_table(
+            dset,
+            a.eval_cap,
+            a.seed,
+            balanced=a.eval_sampling == "balanced",
+            query_split=a.eval_split,
+        )
         rows = tbl.to_pylist()
         eval_wafers, eval_labels, eval_splits = wafers_from_rows(
             rows, max_tokens=a.max_tokens, rng=rng
         )
-        # map shape = device proxy; per-map splits put one lot/device on both sides
+        # map shape = device proxy: devices span lots, so same-shape neighbours share labels
         eval_groups = np.array([f"{r['height']}x{r['width']}" for r in rows], dtype=object)
         del rows
-    q = np.isin(eval_splits, ["val", "test"])
+    q = eval_splits == a.eval_split
     mix = dict(zip(*(v.tolist() for v in np.unique(eval_labels[q], return_counts=True))))
     log.info(f"train={len(train_wafers)} eval_labeled={len(eval_wafers)} query class mix={mix}")
 

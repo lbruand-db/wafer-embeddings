@@ -47,7 +47,7 @@ code_source:
 env_variables:
   PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True # reduce CUDA fragmentation
   MAX_TRAIN: "50000"
-  EVAL_CAP: "5000" # per side: val/test queries + train kNN bank (seeded, class-stratified)
+  EVAL_CAP: "5000" # per side: EVAL_SPLIT queries + train kNN bank (seeded, class-stratified)
   STEPS: "2000"
   BATCH_SIZE: "64"
   DEPTH: "12"
@@ -56,7 +56,8 @@ env_variables:
   WARMUP_FRAC: "0.1"
   FREEZE_LAST_FRAC: "0.1" # DINO prototype-layer freeze (stabilizer)
   CLIP_GRAD: "0" # global grad-norm clip, 0 = off
-  SELECT_EVERY: "200" # keep-best checkpoint, scored on the train-side kNN bank only
+  SELECT_EVERY: "0" # keep-best off: no labels in training (it would use train-split labels)
+  EVAL_SPLIT: "val" # development protocol; "test" only for the final report
   # ISAB (O(N*m)) is the default: WM-811K has large variable-size maps for which
   # full O(N^2) attention OOMs an A10 (SPECS.md §4 / de-risking R3).
   ATTENTION: "isab"
@@ -68,4 +69,5 @@ command: |
     --batch-size "$BATCH_SIZE" --attention "$ATTENTION" \
     --depth "$DEPTH" --max-tokens "$MAX_TOKENS" --lr "$LR" \
     --warmup-frac "$WARMUP_FRAC" --freeze-last-frac "$FREEZE_LAST_FRAC" \
-    --clip-grad "$CLIP_GRAD" --select-every "$SELECT_EVERY"
+    --clip-grad "$CLIP_GRAD" --select-every "$SELECT_EVERY" \
+    --eval-split "$EVAL_SPLIT"

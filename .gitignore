@@ -25,3 +25,6 @@ __pycache__/
 
 # OS
 .DS_Store
+
+# local MLflow tracking store created by mlflow client calls
+mlflow.db

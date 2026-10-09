@@ -34,4 +34,4 @@ jobs:
         run: uv run pytest
 
       - name: App frontend unit tests (node --test; wafer.js has no npm deps)
-        run: node --test app/frontend/src/
+        run: node --test app/frontend/src/*.test.js

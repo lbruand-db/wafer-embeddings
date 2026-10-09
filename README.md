@@ -112,7 +112,7 @@ uv sync                          # .venv with deps (+ dev: black, ty, pytest, fa
 uv run black --check .           # formatting (line length 100)
 uv run ty check                  # type checking (Astral ty)
 uv run pytest                    # 180+ Python unit tests, CPU-only, a few seconds
-node --test app/frontend/src/    # JS tests for the app's map codec
+node --test app/frontend/src/*.test.js  # JS tests for the app's map codec
 databricks bundle validate --profile mmf
 
 # the app locally (after `cd app && npm install`)

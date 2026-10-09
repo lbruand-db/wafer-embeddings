@@ -7,7 +7,7 @@
   "scripts": {
     "build": "vite build frontend",
     "dev": "vite frontend",
-    "test": "node --test frontend/src/"
+    "test": "node --test frontend/src/*.test.js"
   },
   "dependencies": {
     "vue": "3.5.43",

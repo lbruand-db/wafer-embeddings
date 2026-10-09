@@ -59,6 +59,7 @@ class LakebaseConfig:
     build_mode: str = "standard"
     app_name: str = "wafer-search"
     refresh: bool = False  # re-snapshot an online synced table (after re-embedding)
+    sync_timeout_s: int = 3600  # give up waiting for the synced table after this
 
     @property
     def branch_name(self) -> str:
@@ -98,15 +99,31 @@ def synced_table_spec(cfg: LakebaseConfig) -> dict:
     }
 
 
-def synced_table_action(state: str | None) -> str:
-    """What to do given the synced table's ``detailed_state`` (None = does not exist)."""
+def synced_table_action(state: str | None, created: bool = False) -> str:
+    """What to do given the synced table's ``detailed_state`` (None = not found).
+
+    Any ``SYNCED_TABLE_ONLINE*`` state is serving data and is never deleted — including
+    ``ONLINE_PIPELINE_FAILED`` (only its last refresh failed). Only offline failures are
+    recreated. ``created``: we already POSTed a create this run, so "not found" means
+    "not visible yet" (wait), not "create again".
+    """
     if state is None:
-        return "create"
+        return "wait" if created else "create"
+    if state.startswith("SYNCED_TABLE_ONLINE"):
+        return "ok"
     if "FAILED" in state or "ERROR" in state:
         return "recreate"
-    if state.startswith("SYNCED_TABLE_ONLINE") or state == "SYNCED_TABLE_ONLINE":
-        return "ok"
     return "wait"
+
+
+def drop_table_sql(table: str) -> list[str]:
+    """Remove a leftover Postgres table before recreating a failed synced table."""
+    return [f"DROP TABLE IF EXISTS {_check_ident(table)} CASCADE"]
+
+
+def is_preload_not_ready(err: Exception) -> bool:
+    """The one transient error worth retrying: Search preload not active yet (restart)."""
+    return "shared_preload_libraries" in str(err) or "the database system is" in str(err)
 
 
 def extension_sql() -> list[str]:
@@ -195,6 +212,8 @@ class _Rest:  # pragma: no cover - needs a workspace
 
     def wait(self, op: dict, what: str, timeout_s: int = 1800) -> dict:
         t0 = time.time()
+        if not isinstance(op, dict) or "name" not in op:
+            return op or {}  # a plain response, not a long-running operation
         while not op.get("done"):
             if time.time() - t0 > timeout_s:
                 raise TimeoutError(f"{what}: operation {op.get('name')} not done")
@@ -276,10 +295,10 @@ def bootstrap(w, cfg: LakebaseConfig, log) -> dict:  # pragma: no cover - needs 
             with _psql(w, cfg) as conn:
                 _run(conn, extension_sql(), log)
             break
-        except Exception as e:  # computes may still be restarting after step 2
-            if attempt == 11:
+        except Exception as e:  # only the restart-after-enable window is transient
+            if attempt == 11 or not is_preload_not_ready(e):
                 raise
-            log(f"extension not ready yet ({type(e).__name__}); retrying")
+            log(f"Lakebase Search preload not active yet ({e}); retrying")
             time.sleep(10)
     report["extension"] = "lakebase_vector"
 
@@ -289,15 +308,24 @@ def bootstrap(w, cfg: LakebaseConfig, log) -> dict:  # pragma: no cover - needs 
         log(report["synced_table"])
         return report
     st_path = f"synced_tables/{cfg.synced_table}"
+    created, recreated, deadline = False, False, time.time() + cfg.sync_timeout_s
     while True:
+        if time.time() > deadline:
+            raise TimeoutError(f"synced table {cfg.synced_table} not online in time")
         st = rest.get_or_none(st_path)
         state = ((st or {}).get("status") or {}).get("detailed_state") if st else None
-        action = synced_table_action(state)
+        action = synced_table_action(state, created=created)
         log(f"synced table {cfg.synced_table}: state={state} -> {action}")
         if action == "ok":
             break
         if action == "recreate":
+            if recreated:  # failed again after a clean rebuild: not transient, stop
+                msg = ((st or {}).get("status") or {}).get("message")
+                raise RuntimeError(f"synced table failed again after recreate: {msg}")
             rest.wait(rest.call("DELETE", st_path), "delete failed synced table")
+            with _psql(w, cfg) as conn:  # a leftover Postgres table would block the rebuild
+                _run(conn, drop_table_sql(cfg.pg_table), log)
+            recreated, created = True, False
             continue
         if action == "create":
             rest.call(
@@ -306,9 +334,12 @@ def bootstrap(w, cfg: LakebaseConfig, log) -> dict:  # pragma: no cover - needs 
                 body=synced_table_spec(cfg),
                 query={"synced_table_id": cfg.synced_table},
             )
+            created = True
         time.sleep(30)
     report["synced_table"] = "online"
-    if cfg.refresh:
+    if cfg.refresh and created:
+        log("synced table was just created: its initial snapshot is fresh, skipping refresh")
+    elif cfg.refresh:
         pid = ((st or {}).get("status") or {}).get("pipeline_id")
         if not pid:
             raise RuntimeError("synced table has no pipeline_id to refresh")
@@ -328,10 +359,13 @@ def bootstrap(w, cfg: LakebaseConfig, log) -> dict:  # pragma: no cover - needs 
         _run(conn, index_sql(cfg.pg_table, cfg.index, cfg.build_mode), log)
         report["index"] = cfg.index
         # 7. app grants
+        from databricks.sdk.errors import NotFound  # ty: ignore[unresolved-import]
+
         try:
             sp = w.apps.get(cfg.app_name).service_principal_client_id
-        except Exception:
+        except NotFound:  # no app (yet): nothing to grant; other errors must surface
             sp = None
+            log(f"app {cfg.app_name} not found: skipping grants")
         if sp:
             _run(conn, grant_sql(cfg.pg_schema, sp), log)
             report["grants"] = f"SELECT on {cfg.pg_schema} for app {cfg.app_name}"

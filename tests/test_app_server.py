@@ -67,7 +67,7 @@ def test_search_uses_stored_vector_and_cross_lot():
     assert r["query"]["id"] == 7 and r["embedding"] == "stored"
     assert [n["id"] for n in r["neighbours"]] == [8, 9, 10]
     assert r["neighbours"][0]["similarity"] == pytest.approx(0.99)
-    assert r["same_class"] == 1
+    assert r["same_class"] == 1 and r["labeled_neighbours"] == 2  # the None label is excluded
     sql, params = db.calls[-1]
     assert "IS DISTINCT FROM %(lot)s" in sql and params["lot"] == "lotA"
     assert params["q"] == ws.vector_literal([1.0, 0.0, 0.0]) and params["k"] == 3

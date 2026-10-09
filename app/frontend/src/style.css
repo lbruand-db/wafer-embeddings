@@ -7,7 +7,8 @@ header h1 { margin: 0; font-size: 20px; }
 aside { background: #fff; border-radius: 8px; padding: 16px; display: flex; flex-direction: column; gap: 10px; height: fit-content; }
 aside h2, main h2 { font-size: 15px; margin: 6px 0; }
 label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
-label.check { flex-direction: row; align-items: center; gap: 6px; }
+label.check { flex-direction: row; align-items: flex-start; gap: 6px; }
+code.endpoint { word-break: break-all; color: #6b7380; }
 label.disabled { opacity: 0.5; }
 select, input[type="number"] { padding: 6px; border: 1px solid #c9ced6; border-radius: 6px; }
 button { padding: 8px; border: 1px solid #c9ced6; border-radius: 6px; background: #fff; cursor: pointer; }

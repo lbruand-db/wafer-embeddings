@@ -81,7 +81,7 @@ onMounted(async () => {
       <label class="check"><input v-model="crossLot" type="checkbox" /> Exclude the query's own lot</label>
       <label class="check" :class="{ disabled: !config.live_embedding }">
         <input v-model="live" type="checkbox" :disabled="!config.live_embedding" />
-        Re-embed query via endpoint <code>{{ config.endpoint || "n/a" }}</code>
+        <span>Re-embed the query live<br /><code class="endpoint">{{ config.endpoint || "no endpoint" }}</code></span>
       </label>
       <button v-if="query" :disabled="loading" @click="search(query.id)">Re-run search</button>
     </aside>
@@ -96,10 +96,13 @@ onMounted(async () => {
           <h2>#{{ query.id }} · {{ query.label || "unlabeled" }}</h2>
           <p>split <b>{{ query.split }}</b> · lot <code>{{ query.lot }}</code> · {{ query.height }}×{{ query.width }}</p>
           <p class="muted">embedding: {{ result.embedding === "live" ? "live from the endpoint" : "stored (batch job)" }}</p>
-          <p v-if="query.label">
-            <b>{{ result.same_class }}/{{ result.neighbours.length }}</b> neighbours share the class
-            <b>{{ query.label }}</b><span v-if="result.cross_lot"> (other lots only)</span>
+          <p v-if="query.label && result.labeled_neighbours">
+            <b>{{ result.same_class }}/{{ result.labeled_neighbours }}</b> labeled neighbours share the
+            class <b>{{ query.label }}</b>
+            <span class="muted">({{ result.neighbours.length - result.labeled_neighbours }} unlabeled)</span>
           </p>
+          <p v-else-if="query.label" class="muted">All neighbours are unlabeled (most of WM-811K is).</p>
+          <p v-if="result.cross_lot" class="muted">Neighbours from other lots only.</p>
         </div>
       </section>
 
@@ -108,7 +111,7 @@ onMounted(async () => {
                 :class="{ match: query.label && n.label === query.label }"
                 @click="search(n.id)" title="Search from this wafer">
           <WaferMap :code="n.map_code" :size="120" />
-          <figcaption>#{{ n.id }} · {{ n.label || "unlabeled" }}<br />cos {{ n.similarity.toFixed(3) }}</figcaption>
+          <figcaption>#{{ n.id }} · {{ n.label || "unlabeled" }}<br />cos {{ n.similarity.toFixed(4) }}</figcaption>
         </figure>
       </section>
     </main>

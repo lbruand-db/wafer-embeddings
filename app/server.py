@@ -96,12 +96,14 @@ def create_app(
             {"q": ws.vector_literal(vec), "qid": q["id"], "lot": q["lot"], "k": k},
         )
         neighbours = [_wafer(h) | {"similarity": float(h[len(_WAFER_COLS)])} for h in hits]
-        same = sum(1 for n in neighbours if q["label"] and n["label"] == q["label"])
+        labeled = [n for n in neighbours if n["label"]]  # most of WM-811K is unlabeled
+        same = sum(1 for n in labeled if q["label"] and n["label"] == q["label"])
         return {
             "query": q,
             "embedding": source,
             "cross_lot": cross_lot,
             "same_class": same,
+            "labeled_neighbours": len(labeled),
             "neighbours": neighbours,
         }
 

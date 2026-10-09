@@ -77,10 +77,31 @@ def test_grant_sql_quotes_service_principal_and_rejects_injection():
         ("SYNCED_TABLE_ONLINE_NO_PENDING_UPDATE", "ok"),
         ("SYNCED_TABLE_ONLINE", "ok"),
         ("SYNCED_TABLE_OFFLINE_FAILED", "recreate"),
+        # serving data with a failed last refresh: keep it, never delete
+        ("SYNCED_TABLE_ONLINE_PIPELINE_FAILED", "ok"),
+        ("SYNCED_TABLE_ONLINE_TRIGGERED_UPDATE", "ok"),
+        ("SYNCED_TABLE_OFFLINE", "wait"),
     ],
 )
 def test_synced_table_action(state, action):
     assert synced_table_action(state) == action
+
+
+def test_synced_table_action_after_our_create_waits_instead_of_reposting():
+    assert synced_table_action(None, created=True) == "wait"
+    assert synced_table_action(None, created=False) == "create"
+
+
+def test_drop_table_and_preload_detection():
+    from wafer_embeddings.jobs.lakebase import drop_table_sql, is_preload_not_ready
+
+    assert drop_table_sql("s.t") == ["DROP TABLE IF EXISTS s.t CASCADE"]
+    with pytest.raises(ValueError):
+        drop_table_sql("s.t; DROP DATABASE x")
+    assert is_preload_not_ready(
+        RuntimeError("[lakebase_vector] must be loaded via shared_preload_libraries.")
+    )
+    assert not is_preload_not_ready(RuntimeError('role "x" does not exist'))
 
 
 def test_synced_table_spec_types_embedding_as_vector_dim():

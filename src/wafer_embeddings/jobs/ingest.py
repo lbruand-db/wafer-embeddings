@@ -96,7 +96,7 @@ def main(argv: list[str] | None = None) -> None:  # pragma: no cover - needs Spa
     p.add_argument("--chunk-size", type=int, default=25000, help="Rows per Delta write.")
     args = p.parse_args(argv)
 
-    import pandas as pd  # ty: ignore[unresolved-import]
+    import pandas as pd
     from databricks.sdk.runtime import spark  # type: ignore
 
     log = get_logger("wafer_embeddings.ingest")

@@ -96,3 +96,35 @@ def test_encoder_does_not_change_global_grad_mode():
     enc, _ = _encoder()
     enc.embed_maps([_map(0)])
     assert torch.is_grad_enabled()  # other code in the process can still train
+
+
+def test_register_helpers():
+    from wafer_embeddings.jobs.register import _args, pip_requirements, sample_input
+
+    req = pip_requirements("2.14.1+cu130", "2.5.3")
+    assert "torch==2.14.1" in req and "numpy==2.5.3" in req  # CUDA local tag dropped
+    assert any("download.pytorch.org/whl/cpu" in r for r in req)  # CPU wheels for serving
+    x = sample_input()
+    assert list(x.columns) == ["height", "width", "wafer_map"]
+    assert all(len(m) == h * w for h, w, m in zip(x.height, x.width, x.wafer_map))
+    a = _args(["--catalog", "c", "--schema", "s", "--run-id", "r1"])
+    assert a.name == "wafer_encoder" and a.alias == "champion"
+
+
+def test_pyfunc_round_trip(tmp_path):
+    mlflow = pytest.importorskip("mlflow")  # only with the jobs extra
+    from wafer_embeddings.jobs.register import sample_input
+    from wafer_embeddings.serving.pyfunc import CHECKPOINT, WaferEncoderModel
+
+    torch.manual_seed(0)
+    sd = build_encoder(CONFIG).state_dict()
+    ck = tmp_path / "ck.pt"
+    torch.save({"state_dict": sd, "config": CONFIG}, ck)
+    path = str(tmp_path / "model")
+    mlflow.pyfunc.save_model(
+        path, python_model=WaferEncoderModel(), artifacts={CHECKPOINT: str(ck)}
+    )
+    out = mlflow.pyfunc.load_model(path).predict(sample_input())
+    emb = np.array(out["embedding"].tolist())
+    assert emb.shape == (2, 16)
+    np.testing.assert_allclose(np.linalg.norm(emb, axis=1), 1.0, atol=1e-5)

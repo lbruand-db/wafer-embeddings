@@ -27,19 +27,47 @@ neighbours are all Center (green borders); the unlabeled ones show the same cent
 
 ## What's built, end to end
 
-```
-LSWMD.pkl ─ingest─▶ Delta wafer_maps (+ parquet export, lot-grouped splits)
-   │
-   ├─ AI Runtime GPU ─▶ DINO pretraining (per-die ViT) ─▶ MLflow run + checkpoint
-   │                                                          │
-   │                                         jobs/register ─▶ UC model wafer_encoder@champion
-   │                                                          ├─▶ Model Serving endpoint wafer-encoder
-   └─ AI Runtime GPU ─▶ batch embedding ─▶ Delta wafer_map_embeddings (CDF)
-                                             │ UC synced table
-                                             ▼
-                       Lakebase project (PG 17, Lakebase Search) ─ vector(128) + lakebase_ann index
-                                             ▲
-                         Databricks App wafer-search (Vue 3 + FastAPI) ── live re-embed ─▶ endpoint
+```mermaid
+flowchart LR
+    subgraph data["📥 Ingest · Unity Catalog"]
+        direction TB
+        pkl[("LSWMD.pkl<br/>WM-811K")] -- "ingest job" --> maps[("Delta <b>wafer_maps</b><br/>696,599 maps<br/>lot-grouped splits")]
+        maps --> parquet[("Parquet export<br/>UC volume")]
+    end
+
+    subgraph model["🧠 Train and register · AI Runtime GPU"]
+        direction TB
+        train["DINO pretraining<br/>per-die ViT · 2.4M params"] --> run["MLflow run<br/>metrics · checkpoint"]
+        run -- "jobs/register" --> uc["UC model<br/><b>wafer_encoder@champion</b>"]
+        uc --> serving["Model Serving<br/><b>wafer-encoder</b><br/>CPU · scale-to-zero"]
+    end
+
+    subgraph index["🔎 Embed and index · Lakebase Search"]
+        direction TB
+        embed["Batch embedding · GPU<br/>696,599 maps in 7.5 min"] -- "embed job" --> emb[("Delta <b>wafer_map_embeddings</b><br/>change data feed")]
+        emb -- "UC synced table" --> pg[("Lakebase · Postgres 17<br/>vector(128)<br/><b>lakebase_ann</b> cosine index")]
+    end
+
+    subgraph serve["🖥️ Search · Databricks App"]
+        direction TB
+        user(["👩‍🔬 Engineer"]) --> app["<b>wafer-search</b><br/>Vue 3 + FastAPI"]
+    end
+
+    data -- "training sample" --> model
+    model -- "@champion encoder" --> index
+    serve -- "top-k · ~40–120 ms" --> index
+    serve -. "live re-embed" .-> model
+
+    classDef store fill:#e8f1f8,stroke:#1b3139,color:#1b3139
+    classDef compute fill:#fff4e5,stroke:#ff3621,color:#1b3139
+    classDef serveNode fill:#e9f7ef,stroke:#2e7d32,color:#1b3139
+    class pkl,maps,parquet,emb,pg store
+    class train,run,embed compute
+    class uc,serving,app,user serveNode
+    style data fill:#f7f9fb,stroke:#c9ced6
+    style model fill:#f7f9fb,stroke:#c9ced6
+    style index fill:#f7f9fb,stroke:#c9ced6
+    style serve fill:#f7f9fb,stroke:#c9ced6
 ```
 
 | Piece | Where | Status |

@@ -1,0 +1,13 @@
+resources:
+  model_serving_endpoints:
+    wafer_encoder:
+      name: wafer-encoder
+      # Real-time path (SPECS.md §10): native wafer grid in, embedding out. CPU is enough
+      # for the small encoder (§16 item 19); scale-to-zero keeps idle cost at zero.
+      config:
+        served_entities:
+          - name: wafer-encoder
+            entity_name: ${var.catalog}.${var.schema}.wafer_encoder
+            entity_version: ${var.encoder_version}
+            workload_size: Small
+            scale_to_zero_enabled: true

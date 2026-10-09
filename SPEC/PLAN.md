@@ -123,7 +123,8 @@ the LR decayed). Recipe work continues at the small size.
    schedule once the recipe beats polar).
 2. Add **RankMe** (label-free effective rank on a fixed train probe set) to the tracked
    metrics.
-3. Cheap levers on the plateau: larger batch (DINO centering), higher token cap.
+3. ~~Cheap levers~~ tried: batch 64 (0.397 / 0.352) and 1,024 tokens (0.422 / 0.330 vs
+   polar 0.501 / 0.359 on its eval) — no gain over the baseline gap. RankMe rises ~4 → ~12.
 4. **Descriptor-guided positives**: polar-histogram nearest neighbours as extra DINO /
    InfoNCE positives (NNCLR-style, label-free); plus a plain InfoNCE baseline.
 5. If still short: Sonata-style masked self-distillation (anti geometric shortcut); or the
@@ -151,6 +152,28 @@ the LR decayed). Recipe work continues at the small size.
   Loc ↔ Edge-Loc; padding-invariance unit tests.
 - **Exit:** ISAB retains quality and makes giant maps feasible within budget; embeddings stable
   across size; chosen invariances hold. (Still exact-search eval — no Lakebase.)
+
+### End-to-end path — built 2026-10-09 on the provisional G1 model (R1-long-small)
+The user gated R1-long-small provisionally (test, once: cross-device 0.389 / 0.356 vs
+polar 0.442 / 0.359; beats polar on map@10 0.346 vs 0.315) to prove the full stack:
+- ✅ **UC model** `mmf_mlops_demo_catalog.wafer_embeddings.wafer_encoder` v2 `@champion`
+  (`jobs/register.py`: pyfunc over the CI-tested `serving.WaferEncoder`, 128-d).
+- ✅ **Model Serving** `wafer-encoder` (bundle `resources/serving.yml`; CPU Small,
+  scale-to-zero); output matches the local encoder to 1e-7.
+- ✅ **Batch embeddings**: `ai_runtime/embed.yaml` (GPU, 696,599 maps in 7.5 min) → volume
+  parquet → bundle job `embed` → Delta `wafer_map_embeddings` (CDF on). (In-Spark
+  embedding OOMs on serverless Python workers importing CUDA torch.)
+- ✅ **Lakebase**: project `wafer-embeddings` (PG 17), database `wafer_embeddings`; UC
+  synced table → Postgres `wafer_embeddings.wafer_map_embeddings_pg` (`vector(128)`).
+- ⏳ **Lakebase Search index**: `jobs/lakebase.py` builds the cosine `lakebase_ann` index
+  once Lakebase Search is enabled on the project (UI-only today — the one manual step).
+  Until then queries use pgvector exact scan (~450 ms at 700K rows).
+- ✅ **Databricks App** `wafer-search` (bundle `resources/app.yml`): pick a wafer, see its
+  map, top-k neighbours (optionally from other lots), optional live re-embedding via the
+  endpoint.
+- Not yet N7-clean: Lakebase project / database / synced table / pgvector / grants were
+  created via CLI + SQL (to be folded into a bootstrap step); no `CREATE CATALOG` on the
+  metastore, so the database isn't registered as its own UC catalog.
 
 ### P3 — R4 + R5: Training-at-scale + model serving on the platform
 - **AI Runtime training path (§16 16):** ✅ **done** — `train` runs reproducibly via

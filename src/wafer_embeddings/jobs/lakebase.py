@@ -60,6 +60,7 @@ class LakebaseConfig:
     app_name: str = "wafer-search"
     refresh: bool = False  # re-snapshot an online synced table (after re-embedding)
     sync_timeout_s: int = 3600  # give up waiting for the synced table after this
+    suspend_timeout_s: int = 3600  # scale computes to zero after 1 h idle (default is 24 h)
 
     @property
     def branch_name(self) -> str:
@@ -77,7 +78,49 @@ class LakebaseConfig:
 
 
 def project_spec(cfg: LakebaseConfig) -> dict:
-    return {"spec": {"display_name": cfg.project, "pg_version": cfg.pg_version}}
+    return {
+        "spec": {
+            "display_name": cfg.project,
+            "pg_version": cfg.pg_version,
+            "default_endpoint_settings": {"suspend_timeout_duration": f"{cfg.suspend_timeout_s}s"},
+        }
+    }
+
+
+def duration_seconds(d: str | None) -> int | None:
+    """Parse a protobuf duration string like ``"3600s"`` (None if absent)."""
+    if not d:
+        return None
+    return int(float(d.rstrip("s")))
+
+
+def suspend_updates(project: dict, endpoints: list[dict], seconds: int) -> list[tuple]:
+    """``(path, update_mask, body)`` PATCHes so the project default and every compute
+    suspend after ``seconds`` idle. Empty when already set (idempotent)."""
+    want = f"{seconds}s"
+    out = []
+    cur = ((project.get("status") or {}).get("default_endpoint_settings") or {}).get(
+        "suspend_timeout_duration"
+    )
+    if duration_seconds(cur) != seconds:
+        out.append(
+            (
+                project["name"],
+                "spec.default_endpoint_settings.suspend_timeout_duration",
+                {"spec": {"default_endpoint_settings": {"suspend_timeout_duration": want}}},
+            )
+        )
+    for ep in endpoints:
+        cur = (ep.get("status") or {}).get("suspend_timeout_duration")
+        if duration_seconds(cur) != seconds:
+            out.append(
+                (
+                    ep["name"],
+                    "spec.suspend_timeout_duration",
+                    {"spec": {"suspend_timeout_duration": want}},
+                )
+            )
+    return out
 
 
 def synced_table_spec(cfg: LakebaseConfig) -> dict:
@@ -266,6 +309,16 @@ def bootstrap(w, cfg: LakebaseConfig, log) -> dict:  # pragma: no cover - needs 
         report["project"] = "exists"
     log(f"project {cfg.project}: {report['project']}")
 
+    # 1b. compute: scale to zero after cfg.suspend_timeout_s idle (project default + computes)
+    eps = rest.call("GET", f"{cfg.branch_name}/endpoints").get("endpoints", [])
+    updates = suspend_updates(rest.call("GET", p), eps, cfg.suspend_timeout_s)
+    for path, mask, body in updates:
+        rest.wait(
+            rest.call("PATCH", path, body=body, query={"update_mask": mask}), f"update {path}"
+        )
+        log(f"set {mask} = {cfg.suspend_timeout_s}s on {path}")
+    report["suspend_timeout"] = f"{cfg.suspend_timeout_s}s ({len(updates)} updated)"
+
     # 2. Lakebase Search (idempotent; restarts computes only the first time)
     rest.wait(rest.call("POST", f"{p}/search-extensions", body={}), "enable Lakebase Search")
     report["search"] = "enabled"
@@ -396,6 +449,12 @@ def _args(argv=None):
     p.add_argument("--build-mode", default=d.build_mode, choices=["standard", "quality"])
     p.add_argument("--app-name", default=d.app_name)
     p.add_argument(
+        "--suspend-timeout-s",
+        type=int,
+        default=d.suspend_timeout_s,
+        help="Scale Lakebase computes to zero after this many idle seconds.",
+    )
+    p.add_argument(
         "--refresh",
         action="store_true",
         help="Re-snapshot an already-online synced table (use after re-embedding).",
@@ -413,6 +472,7 @@ def _args(argv=None):
         build_mode=a.build_mode,
         app_name=a.app_name,
         refresh=a.refresh,
+        suspend_timeout_s=a.suspend_timeout_s,
     )
 
 

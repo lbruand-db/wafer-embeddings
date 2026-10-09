@@ -123,7 +123,9 @@ def test_config_names_and_project_spec():
     cfg = LakebaseConfig()
     assert cfg.pg_table == "wafer_embeddings.wafer_map_embeddings_pg"
     assert cfg.pg_schema == "wafer_embeddings"
-    assert project_spec(cfg)["spec"]["pg_version"] >= 16  # Lakebase Search needs PG 16+
+    spec = project_spec(cfg)["spec"]
+    assert spec["pg_version"] >= 16  # Lakebase Search needs PG 16+
+    assert spec["default_endpoint_settings"] == {"suspend_timeout_duration": "3600s"}
 
 
 def test_owner_role_finds_the_job_identity():
@@ -149,3 +151,36 @@ def test_args_build_config():
     assert cfg.project == "p2" and cfg.dim == 384 and cfg.build_mode == "quality"
     assert cfg.branch_name == "projects/p2/branches/production"
     assert cfg.refresh is False and _args(["--refresh"]).refresh is True
+
+
+def test_suspend_updates_only_what_differs():
+    from wafer_embeddings.jobs.lakebase import duration_seconds, suspend_updates
+
+    assert duration_seconds("3600s") == 3600 and duration_seconds(None) is None
+    project = {
+        "name": "projects/p",
+        "status": {"default_endpoint_settings": {"suspend_timeout_duration": "86400s"}},
+    }
+    eps = [
+        {
+            "name": "projects/p/branches/b/endpoints/primary",
+            "status": {"suspend_timeout_duration": "86400s"},
+        },
+        {
+            "name": "projects/p/branches/b/endpoints/ro",
+            "status": {"suspend_timeout_duration": "3600s"},
+        },
+    ]
+    ups = suspend_updates(project, eps, 3600)
+    assert [u[0] for u in ups] == ["projects/p", "projects/p/branches/b/endpoints/primary"]
+    assert ups[0][1] == "spec.default_endpoint_settings.suspend_timeout_duration"
+    assert ups[1] == (
+        "projects/p/branches/b/endpoints/primary",
+        "spec.suspend_timeout_duration",
+        {"spec": {"suspend_timeout_duration": "3600s"}},
+    )
+    done = {
+        "name": "projects/p",
+        "status": {"default_endpoint_settings": {"suspend_timeout_duration": "3600s"}},
+    }
+    assert suspend_updates(done, eps[1:], 3600) == []  # idempotent: nothing to change

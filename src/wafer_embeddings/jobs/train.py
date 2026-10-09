@@ -126,6 +126,12 @@ def _args(argv=None):
         default=0,
         help="Log student+teacher eval metrics every N steps (log-only; 0 = off).",
     )
+    p.add_argument(
+        "--probe-size",
+        type=int,
+        default=2048,
+        help="Train maps (no labels) in the fixed RankMe probe set logged when tracking.",
+    )
     p.add_argument("--run-name", default="dino", help="MLflow run name.")
     p.add_argument("--seed", type=int, default=0)
     a = p.parse_args(argv)
@@ -197,6 +203,7 @@ HEADLINE_KEYS = (
     "knn_macro_recall",
     "map@10",
     "cluster_nmi",
+    "rankme",
 )
 
 
@@ -235,7 +242,7 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
     import torch
 
     from wafer_embeddings.eval.baselines import polar_fail_embedding
-    from wafer_embeddings.eval.metrics import effective_rank
+    from wafer_embeddings.eval.metrics import effective_rank, rankme
     from wafer_embeddings.model.dino import DinoModel, DINOHead, DINOLoss
     from wafer_embeddings.model.encoder import PerDieViT
 
@@ -307,7 +314,12 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
             emb, eval_labels, eval_splits, N_CLASSES, class_names=CLASS_NAMES, groups=eval_groups
         )
         m["effective_rank"] = effective_rank(emb)
+        m["rankme"] = rankme(emb)
         return {f"{prefix}{k}": v for k, v in m.items()}
+
+    # Label-free health signal: RankMe on a fixed set of train maps (the train sample is
+    # already a seeded random draw, so its head is a random probe set).
+    probe_wafers = train_wafers[: a.probe_size]
 
     # Checkpoint selection uses only the labeled train-side bank, never the G1 queries.
     bank = np.nonzero(eval_splits == "train")[0]
@@ -319,6 +331,9 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
 
     def _track(step: int) -> None:
         for which in ("student", "teacher"):
+            r = rankme(embed_all(dino, probe_wafers, device=device, which=which))
+            mlflow.log_metrics({f"train/{which}/rankme": r}, step=step)
+            log.info(f"track step {step} {which}: train rankme={r:.2f}")
             m = _eval("", which=which)
             # g1_metrics omits a metric it can't compute (e.g. too few queries): skip it
             got = {k: m[k] for k in HEADLINE_KEYS if k in m}

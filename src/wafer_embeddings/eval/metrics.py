@@ -127,6 +127,22 @@ def effective_rank(embeddings: np.ndarray, eps: float = 1e-12) -> float:
     return float(np.exp(-(p * np.log(p)).sum()))
 
 
+def rankme(embeddings: np.ndarray, eps: float = 1e-7) -> float:
+    """RankMe: exp(entropy of the normalized singular values) (Garrido et al., ICML 2023).
+
+    Label-free effective rank of an (N, D) embedding matrix, bounded by min(N, D). Unlike
+    ``effective_rank`` it uses singular values, not covariance eigenvalues (their squares),
+    so a few dominant directions don't swamp the entropy; RankMe was shown to track
+    downstream quality across SSL runs. Not centered, as in the paper.
+    """
+    s = np.linalg.svd(np.asarray(embeddings, dtype=np.float64), compute_uv=False)
+    total = s.sum()
+    if total <= 0:
+        return 1.0
+    p = s / total + eps
+    return float(np.exp(-(p * np.log(p)).sum()))
+
+
 def alignment(z1: np.ndarray, z2: np.ndarray) -> float:
     """Mean squared distance between paired augmented views (ref [24]); lower = tighter."""
     return float(((z1 - z2) ** 2).sum(axis=1).mean())

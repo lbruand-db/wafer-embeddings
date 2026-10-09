@@ -87,3 +87,29 @@ def test_alignment_and_uniformity():
     # Spreading points out lowers uniformity (more negative) vs identical points.
     identical = np.ones((20, 8)) / np.sqrt(8)
     assert me.uniformity(z) < me.uniformity(identical)
+
+
+def test_rankme_counts_effective_dimensions():
+    rng = np.random.default_rng(0)
+    iso = rng.standard_normal((4000, 16))
+    assert 15.0 < me.rankme(iso) <= 16.0 + 1e-6  # isotropic -> ~D
+    basis = np.linalg.qr(rng.standard_normal((16, 16)))[0][:3]
+    rank3 = rng.standard_normal((4000, 3)) @ basis  # lives in a 3-d subspace
+    assert 2.5 < me.rankme(rank3) < 3.2
+    one = np.ones((100, 16)) * rng.standard_normal((100, 1))  # rank 1
+    assert me.rankme(one) < 1.1
+    assert me.rankme(np.zeros((5, 4))) == 1.0
+
+
+def test_rankme_is_scale_invariant_and_bounded_by_samples():
+    rng = np.random.default_rng(1)
+    x = rng.standard_normal((300, 32))
+    assert abs(me.rankme(x) - me.rankme(10.0 * x)) < 1e-6
+    assert me.rankme(rng.standard_normal((8, 64))) <= 8.0 + 1e-6  # rank <= min(N, D)
+
+
+def test_rankme_less_dominated_by_top_direction_than_effective_rank():
+    # one strong direction + 15 weak ones: the squared spectrum hides the weak ones
+    rng = np.random.default_rng(2)
+    x = rng.standard_normal((5000, 16)) * np.array([10.0] + [1.0] * 15)
+    assert me.rankme(x) > 2 * me.effective_rank(x)

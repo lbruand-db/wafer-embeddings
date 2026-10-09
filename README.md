@@ -7,103 +7,161 @@
 [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12-3776AB?logo=python&logoColor=white)](pyproject.toml)
 [![Databricks Asset Bundle](https://img.shields.io/badge/Databricks-Asset%20Bundle-FF3621?logo=databricks&logoColor=white)](databricks.yml)
 [![AI Runtime](https://img.shields.io/badge/Databricks%20AI%20Runtime-serverless%20GPU-FF3621?logo=databricks&logoColor=white)](SPEC/SPECS.md#11-databricks-implementation-stack)
-[![Lakebase Search](https://img.shields.io/badge/Lakebase%20Search-planned-FF3621?logo=databricks&logoColor=white)](SPEC/SPECS.md#9-lakebase-search-integration)
+[![Lakebase Search](https://img.shields.io/badge/Lakebase%20Search-lakebase__ann-FF3621?logo=databricks&logoColor=white)](SPEC/SPECS.md#9-lakebase-search-integration)
+[![App](https://img.shields.io/badge/Databricks%20App-Vue%203%20%2B%20FastAPI-42b883?logo=vuedotjs&logoColor=white)](app/)
 
-Per-die Vision-Transformer + DINO self-supervised embedding model for semiconductor
-wafer maps, trained on Databricks AI Runtime serverless GPU and served into Lakebase
-Search. Primary dataset:
-[WM-811K](http://mirlab.org/dataSet/public/MIR-WM811K.zip) (~811K real maps, variable
-die-grid sizes, 9 defect classes on the labeled subset). See
-[`SPEC/SPECS.md`](SPEC/SPECS.md) for the design and [`SPEC/PLAN.md`](SPEC/PLAN.md) for
-the risk-first build plan.
+A reusable Databricks template for **self-supervised embeddings of semiconductor wafer
+maps**: a per-die Vision Transformer trained with DINO on Databricks AI Runtime
+(serverless GPU), registered in Unity Catalog, served on Model Serving, indexed in
+**Lakebase Search**, and searchable from a **Databricks App**. Primary dataset:
+[WM-811K](http://mirlab.org/dataSet/public/MIR-WM811K.zip) (811,457 maps, 696,599 after
+dedup; variable die-grid sizes; 9 defect classes on the ~24% labeled subset; labels are
+used **only for evaluation**). Design: [`SPEC/SPECS.md`](SPEC/SPECS.md). Plan and current
+status: [`SPEC/PLAN.md`](SPEC/PLAN.md).
+
+![Wafer-map similarity search app: a Center-defect query wafer and its 12 nearest neighbours from other lots, retrieved from Lakebase Search; all 5 labeled neighbours are Center](docs/images/wafer-search-app.png)
+
+*The `wafer-search` app: a Center-defect query and its 12 nearest neighbours from **other
+lots** (the `lakebase_ann` cosine index over 696,599 embeddings). The 5 labeled
+neighbours are all Center (green borders); the unlabeled ones show the same centre blob.*
+
+## What's built, end to end
+
+```
+LSWMD.pkl ─ingest─▶ Delta wafer_maps (+ parquet export, lot-grouped splits)
+   │
+   ├─ AI Runtime GPU ─▶ DINO pretraining (per-die ViT) ─▶ MLflow run + checkpoint
+   │                                                          │
+   │                                         jobs/register ─▶ UC model wafer_encoder@champion
+   │                                                          ├─▶ Model Serving endpoint wafer-encoder
+   └─ AI Runtime GPU ─▶ batch embedding ─▶ Delta wafer_map_embeddings (CDF)
+                                             │ UC synced table
+                                             ▼
+                       Lakebase project (PG 17, Lakebase Search) ─ vector(128) + lakebase_ann index
+                                             ▲
+                         Databricks App wafer-search (Vue 3 + FastAPI) ── live re-embed ─▶ endpoint
+```
+
+| Piece | Where | Status |
+|---|---|---|
+| Ingest (stream, dedup, **lot-grouped** splits) | `jobs/ingest.py`, bundle job `ingest` | ✅ 696,599 maps, 45,345 lots |
+| DINO pretraining (reference-faithful recipe) | `train/`, `ai_runtime/train.yaml` | ✅ on `GPU_1xA10` |
+| UC model (MLflow pyfunc) | `serving/`, `jobs/register.py` | ✅ `wafer_encoder` v2 `@champion` |
+| Real-time serving | `resources/serving.yml` | ✅ CPU Small, scale-to-zero |
+| Batch embeddings | `ai_runtime/embed.yaml` + bundle job `embed` | ✅ 696,599 maps in 7.5 min (A10) |
+| Lakebase Search (project, Search, DB, extension, synced table, index, grants) | `jobs/lakebase.py`, bundle job `bootstrap` | ✅ fully automatic + idempotent |
+| Search app | `app/` (Vue 3 + FastAPI), `resources/app.yml` | ✅ top-k in ~40–120 ms |
 
 ## Why per-die tokens
 
-Wafer maps vary wildly in size (a handful of dies up to tens of thousands) and every
-die matters, so instead of resizing to a fixed image we treat **each on-wafer die as one
-token** (patch=1). The encoder is then a Set Transformer over dies: coordinate-based
-positional encoding (center/radius-normalized Fourier features, generalizes to unseen
-grid sizes), a learned per-die state embedding, and permutation/padding-invariant
-attention. Full self-attention is O(N²); for WM-811K's giant maps we use **ISAB** induced
-attention (O(N·m)) plus a per-wafer token cap to bound GPU memory. Training is **DINO**
-self-distillation (no labels); labels are used only for Gate-G1 evaluation.
+Wafer maps vary wildly in size (a handful of dies up to tens of thousands) and every die
+matters, so instead of resizing to a fixed image we treat **each on-wafer die as one
+token** (patch=1). The encoder is a Set Transformer over dies: center/radius-normalized
+coordinates with Fourier features (generalize to unseen grid sizes), a learned per-die
+state embedding, permutation/padding-invariant attention, **ISAB** induced attention
+(O(N·m)) and a **defect-preserving token cap** (keep every FAIL die, subsample PASS dies)
+for WM-811K's giant maps. Training is **DINO** self-distillation following the reference
+recipe: 2 global + 6 local crops, pre-LN blocks, cosine weight decay 0.04 → 0.4, the
+`5e-4·batch/256` LR rule, EMA teacher, prototype-layer freeze.
 
-## Status
+## Results so far
 
-**P0 (reproducible substrate) + P1 (does-it-learn) — code-complete, 73 unit tests green
-on CPU, and the GPU training path is proven end-to-end on AI Runtime** (CUDA A10, parquet
-read from UC volume, DINO train → embed → Gate-G1 eval → MLflow). Everything is created
-programmatically and idempotently (SPECS.md §11.8 / N7); no click-ops. Each billable
-Databricks action is gated behind explicit confirmation (§16).
+Evaluation is **exact search** over the embeddings, with the protocol in
+[SPECS §8.7](SPEC/SPECS.md#87-protocol): splits by **lot** (a whole lot lands in one split),
+development on **val**, **test scored once**, no labels anywhere in training. Because one
+device spans many lots, the headline metrics are **cross-device**: a query may not use
+neighbours with its own map shape. Every run also scores the untrained encoder and a
+training-free, rotation-invariant **polar FAIL-density** descriptor (`eval/baselines.py`).
 
-Built and tested:
-- `data/` — WM-811K streaming parse (`LSWMD.pkl`), label normalization, dedup,
-  content-hash leakage-safe splits (MixedWM38 loader retained for reference)
-- `tokenize/` — native per-die tokenizer, token cap for giant maps, die-preserving
-  (orientation-invariant) augmentations
-- `model/` — per-die ViT (patch=1), full-attention + ISAB, DINO head (weight-normed
-  prototypes) / loss / EMA teacher, gradient checkpointing
-- `train/` — device-agnostic DINO training loop with LR / teacher-temp / momentum
-  schedules; embedding + Gate-G1 metrics (runs on CPU for tests, CUDA on AI Runtime)
-- `eval/` — exact-search retrieval (mAP/nDCG/recall@k), clustering (ARI/NMI/silhouette),
-  kNN probe, collapse / alignment-uniformity diagnostics
-- `jobs/` — idempotent `bootstrap` (UC schema/volume) + streaming WM-811K `ingest`
-  (Delta + parquet export) + `train` (AI Runtime GPU entry point)
+Current model (`wafer_encoder` v2, width 128, depth 6, 10k steps), **test split, scored once**:
 
-Next (each billable → confirm first): a full **Gate-G1** training run (depth-12, longer
-schedule) to clear the provisional targets (mAP@10 ≥ 0.80, NMI ≥ 0.85, no collapse), then
-Lakebase Search integration (P2+).
+| | cross-device kNN macro recall | cross-device precision@10 | map@10 | NMI |
+|---|---|---|---|---|
+| untrained encoder | 0.287 | 0.267 | 0.292 | 0.238 |
+| **DINO (served model)** | **0.389** | **0.356** | **0.346** | 0.235 |
+| polar descriptor (no training) | 0.442 | 0.359 | 0.315 | 0.296 |
+
+The trained model clearly beats its untrained start and beats polar on map@10, but not yet
+on cross-device recall. It is gated **provisionally** (G1) to prove the end-to-end stack;
+see [PLAN.md](SPEC/PLAN.md) for what was learned (leaky per-map splits, the DINO recipe
+deviations that mattered, levers that didn't) and the next modelling steps.
 
 ## Layout
 
 ```
-pyproject.toml            # uv project + wheel (hatchling)
-databricks.yml            # Databricks Asset Bundle (target: dev → fevm-mmf-mlops-demo)
-resources/                # bundle job definitions (bootstrap, ingest)
-ai_runtime/train.yaml     # AI Runtime serverless-GPU training workload (databricks air)
+databricks.yml            # Databricks Asset Bundle (target dev -> fevm-mmf-mlops-demo)
+resources/                # bootstrap (UC + Lakebase), ingest, embed jobs; serving endpoint; app
+ai_runtime/               # AI Runtime GPU workloads: train.yaml, embed.yaml (databricks air)
 src/wafer_embeddings/
-  obs.py                  # logging / progress / timing helpers
-  jobs/                   # entry points: bootstrap, ingest (WM-811K), train (GPU)
-  data/                   # WM-811K parsing, dedup, leakage-safe splits
-  tokenize/               # native per-die tokenizer + token cap + augmentations
-  model/                  # per-die ViT (patch=1, ISAB), DINO head/loss/EMA
-  train/                  # DINO training loop + schedules + Gate-G1 eval
-  eval/                   # exact-search retrieval + clustering + health metrics
-tests/                    # local unit tests (no Databricks, no GPU) — 73 tests
+  data/                   # WM-811K parsing, dedup, lot-grouped splits
+  tokenize/               # per-die tokenizer, defect-preserving token cap, augmentations
+  model/                  # per-die ViT (ISAB, pre-LN), DINO head / loss / EMA teacher
+  train/                  # DINO loop (multi-crop, WD/LR schedules, tracking), G1 metrics
+  eval/                   # exact search, clustering, RankMe, polar baseline
+  serving/                # WaferEncoder (checkpoint -> embeddings), MLflow pyfunc, map codec
+  jobs/                   # bootstrap, ingest, train, register, embed, lakebase
+app/                      # Databricks App: Vue 3 frontend (frontend/) + FastAPI (server.py)
+tests/                    # unit tests: CPU-only, no Databricks
+SPEC/                     # SPECS.md (design) + PLAN.md (risk-first plan, status)
 ```
 
 ## Local dev
 
 ```bash
-uv sync                     # create .venv and install deps (+ dev: black, ty, pytest)
-uv run black --check .      # formatting (line length 100)
-uv run ty check             # type checking (Astral ty)
-uv run pytest               # unit tests (CPU-only, no Databricks) — 73 tests
-databricks bundle validate -t dev --profile mmf   # validate the bundle config
+uv sync                          # .venv with deps (+ dev: black, ty, pytest, fastapi)
+uv run black --check .           # formatting (line length 100)
+uv run ty check                  # type checking (Astral ty)
+uv run pytest                    # 180+ Python unit tests, CPU-only, a few seconds
+node --test app/frontend/src/    # JS tests for the app's map codec
+databricks bundle validate --profile mmf
+
+# the app locally (after `cd app && npm install`)
+cd app && npm run build && python server.py   # needs PGHOST + LAKEBASE_ENDPOINT + workspace auth
 ```
 
-CI (`.github/workflows/ci.yml`) runs black + ty + pytest on every push/PR.
+CI (`.github/workflows/ci.yml`) runs black, ty, pytest and the JS tests on every push.
 
 ## Databricks pipeline
 
+Everything is created from code, idempotently (SPECS §11.8 / N7); re-running any step
+is safe.
+
 ```bash
-# 1. Deploy the bundle (jobs + artifacts) to the dev target
-databricks bundle deploy -t dev --profile mmf
+databricks bundle deploy --profile mmf          # jobs, serving endpoint, app
 
-# 2. Create UC schema + volume (idempotent)
-databricks bundle run bootstrap -t dev --profile mmf
+# 1. UC schema + volume, Lakebase project + Lakebase Search + database + lakebase_vector
+databricks bundle run bootstrap --profile mmf
 
-# 3. Ingest WM-811K → Delta + parquet export (streaming; var.ingest_limit=0 ingests all)
-databricks bundle run ingest -t dev --profile mmf
+# 2. Ingest WM-811K -> Delta wafer_maps + parquet export (lot-grouped splits)
+databricks bundle run ingest --profile mmf
 
-# 4. DINO pretrain + Gate-G1 eval on serverless GPU (AI Runtime, no Spark session)
-databricks air submit --profile mmf ai_runtime/train.yaml
+# 3. DINO pretraining on serverless GPU (recipe flags via EXTRA_ARGS, see the YAML)
+databricks air run --file ai_runtime/train.yaml --profile mmf
+
+# 4. Register the trained encoder in UC (sets @champion)
+uv run --extra jobs python -m wafer_embeddings.jobs.register \
+  --catalog mmf_mlops_demo_catalog --schema wafer_embeddings --run-id <mlflow-run-id>
+
+# 5. Batch-embed all maps on GPU, then load into Delta + sync into Lakebase (--refresh)
+databricks air run --file ai_runtime/embed.yaml --profile mmf
+databricks bundle run embed --profile mmf
+
+# 6. Start the search app
+databricks bundle run wafer_search --profile mmf
 ```
 
-The training job reads the parquet export from the UC volume (AI Runtime has no Spark
-session), pretrains the per-die ViT with DINO, embeds the labeled subset, logs loss /
-collapse / G1 metrics to MLflow, and saves the encoder weights. `ai_runtime/train.yaml`
-documents smoke-test overrides (`--override env_variables.STEPS=50 ...`).
+Lakebase Search is enabled with `POST /api/2.0/postgres/projects/{project}/search-extensions`
+(the call behind the UI button). The extension is `lakebase_vector` (its `CASCADE` brings the
+`vector` type; pgvector is never used directly), and all similarity search goes through the
+cosine `lakebase_ann` index. The bootstrap fails unless a top-k query plan uses that index.
 
 Target workspace: `fevm-mmf-mlops-demo.cloud.databricks.com` · catalog
-`mmf_mlops_demo_catalog` · schema `wafer_embeddings`.
+`mmf_mlops_demo_catalog` · schema `wafer_embeddings` · Lakebase project `wafer-embeddings`.
+
+## Known gaps
+
+- Model registration (`jobs/register.py`) runs locally rather than as a job.
+- The model is 128-d (the spec targets 384) and trails the polar baseline on cross-device
+  recall; next steps are in [PLAN.md](SPEC/PLAN.md).
+- No `CREATE CATALOG` on the metastore, so the synced table lives in
+  `mmf_mlops_demo_catalog` rather than in its own Lakebase catalog.

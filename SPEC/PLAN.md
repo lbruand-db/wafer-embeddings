@@ -6,12 +6,15 @@ confirm** a top assumption before we invest in polished infrastructure. Kill/con
 signals come from the **§16 de-risking checklist** and the **§8.9 acceptance gates** in the
 spec (section numbers below refer to `SPECS.md`).
 
-**Progress (2026-10-09):** P0 done; P1 in progress. The **GPU training path is proven** on
-AI Runtime (131 CPU unit tests, ~3 s, CI green). After fixing the data / eval protocol
-(lot-grouped splits, val-only development, cross-device metrics, a training-free polar
-baseline) and aligning the DINO recipe with the reference implementation, **training now
-clearly beats the untrained encoder** (cross-device kNN macro recall 0.276 → 0.405) but
-**not yet the handcrafted polar baseline** (0.468). See P1 "Status". P2–P5 not started.
+**Progress (2026-10-09):** P0 done. **P1 in progress:** after fixing the data / eval
+protocol (lot-grouped splits, val-only development, cross-device metrics, a training-free
+polar baseline) and aligning the DINO recipe with the reference implementation, training
+**clearly beats the untrained encoder** (val cross-device kNN macro recall 0.276 → 0.405)
+but **not yet the polar baseline** (0.468); see P1 "Status". **End-to-end path built
+ahead of G1** on a provisionally gated model (user decision): UC model → Model Serving →
+batch embeddings → Lakebase Search → Vue/FastAPI Databricks App, all from code (see
+"End-to-end path"). That covers most of P3 and P4; P2 not started. 183 Python + 3 JS unit
+tests (CPU-only, seconds), CI green.
 
 ---
 
@@ -40,8 +43,8 @@ clearly beats the untrained encoder** (cross-device kNN macro recall 0.276 → 0
 | **R3** | Per-die attention infeasible on giant maps / ISAB loses quality | §16 4–6; §4 | **P2** |
 | **R6** | Variable-size + invariance don't generalize | §16 7–10; §5 | **P2** |
 | **R4** | Serverless-GPU AI Runtime training path / env not usable | §16 16–17; §11.3 | ✅ **P3** (proven) |
-| **R5** | GPU model-serving packaging / custom pyfunc won't deploy | §16 18–20; §11.5 | **P3** |
-| **R2** | Lakebase Search (Public Preview) can't do 384-d ANN at p99 < 50 ms | §16 11–14; §9 | **P4** *(deferred)* |
+| **R5** | GPU model-serving packaging / custom pyfunc won't deploy | §16 18–20; §11.5 | ✅ **CPU** (pyfunc deploys, matches local to 1e-7); GPU tier untested |
+| **R2** | Lakebase Search (Public Preview) can't do 384-d ANN at p99 < 50 ms | §16 11–14; §9 | **mostly retired**: `lakebase_ann` works at 696,599 × 128-d, app top-k ~40–120 ms incl. network; still to measure: recall@10 vs exact, server-side p99, 384-d, 1M |
 | **R7** | Multi-scheme binning (needs non-WM-811K data) | §16 22–23; §5 | deferred |
 
 > R2 (Lakebase) drops down the order deliberately: it's a real risk but **not** on the path
@@ -121,8 +124,8 @@ the LR decayed). Recipe work continues at the small size.
 **Next steps (CPU-tested, GPU-run with go-ahead):**
 1. ~~Capacity test~~ done: no gain at this budget (revisit with a tuned LR / longer
    schedule once the recipe beats polar).
-2. Add **RankMe** (label-free effective rank on a fixed train probe set) to the tracked
-   metrics.
+2. ~~RankMe~~ done: label-free effective rank on a fixed train probe set, tracked for
+   student and teacher (rises ~4 untrained → ~12 trained).
 3. ~~Cheap levers~~ tried: batch 64 (0.397 / 0.352) and 1,024 tokens (0.422 / 0.330 vs
    polar 0.501 / 0.359 on its eval) — no gain over the baseline gap. RankMe rises ~4 → ~12.
 4. **Descriptor-guided positives**: polar-histogram nearest neighbours as extra DINO /
@@ -178,29 +181,42 @@ polar 0.442 / 0.359; beats polar on map@10 0.346 vs 0.315) to prove the full sta
 ### P3 — R4 + R5: Training-at-scale + model serving on the platform
 - **AI Runtime training path (§16 16):** ✅ **done** — `train` runs reproducibly via
   `databricks air run --file ai_runtime/train.yaml` on serverless GPU; torch/CUDA confirmed on
-  the env, code shipped via `code_source.snapshot`. Remaining: register the encoder to UC.
-- **Model Serving (§16 18–20):** log/register the pyfunc **from a GPU runtime**; deploy
-  `GPU_SMALL`; endpoint healthy (no `DATABRICKS_ACCELERATOR` fail-fast); verify CPU
-  viability for ~2k-token wafers; pyfunc (tokenizer + encoder) returns a 384-d vector.
-- **Exit:** train → register → real-time embed all run from code (batch embedding → Delta
-  too). Retrieval still served by exact search over the Delta embeddings at this stage.
+  the env, code shipped via `code_source.snapshot`.
+- **UC registration:** ✅ `jobs/register.py` (pyfunc over `serving.WaferEncoder`, CPU torch
+  wheels, signature + input example, `@champion` alias, gate metrics as version tags).
+  Remaining: run it as a job instead of locally.
+- **Model Serving (§16 18–20):** ✅ **CPU** endpoint (Small, scale-to-zero) healthy; the
+  pyfunc returns the 128-d vector, matching the local encoder to 1e-7, ~1 s per call. Not
+  done: the `GPU_SMALL` tier and its log-from-a-GPU-runtime packaging gotcha (only needed
+  for large models / high throughput), and the 384-d encoder the spec targets (N1).
+- **Batch embedding:** ✅ on AI Runtime (`ai_runtime/embed.yaml`, 696,599 maps in 7.5 min) +
+  bundle job `embed` (parquet → Delta, CDF on). In-Spark embedding OOMs on serverless.
+- **Exit:** ✅ train → register → real-time + batch embedding run from code (registration
+  still a local command).
 
-### P4 — R2: Lakebase Search online retrieval *(deferred — when an online store is needed)*
-Only once the model is proven (G1) and we actually need low-latency online ANN at scale.
-**Requires provisioning (billable) → explicit go-ahead.**
-- **Provision** Lakebase instance programmatically (`database create-database-instance`,
-  Public Preview); enable Lakebase Search (§16 11).
-- `lakebase_vector` + `lakebase_ann` on `vector(384)`, cosine; UC synced table → Postgres
-  `vector(384)` (§16 11, 12).
-- Backfill ~700K embeddings; **ANN recall@10 vs. exact ≥ 0.95** (§16 13); **p99 < 50 ms** at
-  ~700K + synthetic 1M (§16 14).
-- **🚦 Gate G2:** recall + latency met. **If NO →** raise Lakebase-preview limits with
-  stakeholders; the spec mandates Lakebase Search, so **no silent substitution**.
+### P4 — R2: Lakebase Search online retrieval *(built early with the end-to-end path)*
+- ✅ **Provisioning, fully automatic + idempotent** (`jobs/lakebase.py`, bootstrap job task
+  `lakebase`): Lakebase **project** (Autoscaling API, PG 17) → **Lakebase Search** via
+  `POST /api/2.0/postgres/projects/{p}/search-extensions` (the UI button's call) → database
+  → `CREATE EXTENSION lakebase_vector CASCADE` (no direct pgvector) → UC **synced table**
+  (Delta → `vector(128)`) → cosine **`lakebase_ann`** index → app grants → plan check.
+  Computes suspend after 1 h idle. Proven on the live project and on a fresh one (§16 11, 12).
+- ✅ Backfilled 696,599 embeddings; the embed job re-syncs with `--refresh`.
+- ⏳ **Still to measure for G2:** **ANN recall@10 vs. exact ≥ 0.95** (§16 13) and
+  server-side **p99 < 50 ms** at ~700K + synthetic 1M (§16 14); redo at 384-d once a 384-d
+  encoder ships.
+- **🚦 Gate G2:** recall + latency met. **If NO →** tune `lakebase_ann.probes` / `epsilon` /
+  `build_mode`, then raise Lakebase-preview limits with stakeholders; the spec mandates
+  Lakebase Search, so **no silent substitution**.
 
 ### P5 — Harden into the reproducible template (N7) + acceptance
 - Wire P0–P4 into one bundle: jobs (ingest, train, batch-embed, lakebase-sync, eval), the
   serving endpoint, the Lakebase instance, **bootstrap + teardown** (§11.8); config-driven
-  (§11.7).
+  (§11.7). **Done:** bundle jobs `bootstrap` (UC + Lakebase), `ingest`, `embed` (+ Lakebase
+  sync), the serving endpoint and the app; AI Runtime workloads for train / embed.
+  **Remaining:** registration as a job, a one-shot orchestration of train → register →
+  embed, a **teardown** target, and dim / version wiring derived from the model instead
+  of the `embed_dim` / `encoder_version` bundle variables.
 - Final §8 eval at the agreed gates; qualitative galleries / UMAP (§8.8); size + (deferred)
   binning hooks.
 - **Deliverable** = the M1–M5 milestones (§12) as reproducible code.
@@ -213,8 +229,10 @@ Only once the model is proven (G1) and we actually need low-latency online ANN a
 P0 ─ P1 (G1) ─ P2 ─ P3 ─ [P4 Lakebase, when needed] ─ P5
 ```
 - Single early critical path: **P0 → P1 (G1)**. Nothing else matters until the model learns.
-- **Lakebase (P4) is off the early path** — pulled in only when an online vector store is
-  genuinely required; retrieval quality is proven with exact search in P1–P3.
+- **Deviation (2026-10-09, user decision):** P3 + P4 were built early on a provisionally
+  gated model to prove the platform path end to end. They don't depend on which encoder
+  wins: a better model is a new UC version → `encoder_version` bump → re-embed → re-sync.
+  The modelling critical path (beat polar → real G1) is unchanged.
 
 ---
 
@@ -224,11 +242,13 @@ P0 ─ P1 (G1) ─ P2 ─ P3 ─ [P4 Lakebase, when needed] ─ P5
   cross-lot retrieval or drop it from the gate.
 - **Pivot menu if the plateau holds** — descriptor-guided positives vs. masked
   self-distillation vs. polar + learned concatenation vs. (last resort) supervised encoder.
-- **Serve now or later?** — the serving path (UC model → batch embeddings → Lakebase) does
-  not depend on which embedding wins; it could be built now around the polar descriptor and
-  swapped to the learned encoder later (polar is ~43-d, not 384-d: N1 deviation until then).
+- ~~**Serve now or later?**~~ decided: served now, with the learned (provisional) encoder.
+- **Embedding width** — the served encoder is 128-d (the spec's N1 says 384); keep 128 (the
+  full-size model brought no gain) or ship 384 with the next real G1 model?
+- **Registration as a job** — `jobs/register.py` runs locally today; make it a bundle /
+  AI Runtime task so train → register → embed is one orchestrated flow.
 - **Token cap value** — GPU job default ~4k; recipe experiments use 512 for speed; tune
   against the giant-map tail vs. accuracy (§16 4).
-- **When do we need Lakebase?** — triggers P4 + provisioning (deferred; not needed early).
+- ~~**When do we need Lakebase?**~~ decided: now (it backs the search app).
 - **Dataset for binning** — none yet; R7 stays deferred until real multi-scheme bin maps
   exist (§16 22).

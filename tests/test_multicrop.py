@@ -132,3 +132,29 @@ def test_embed_all_teacher_vs_student():
     assert not np.allclose(s1, t1)  # EMA teacher lags the student
     with pytest.raises(ValueError):
         embed_all(dino, wafers, which="ema")
+
+
+def test_fit_dino_track_fn_is_log_only():
+    wafers = [_square(10) for _ in range(4)]
+    seen: list[int] = []
+
+    def run(track: bool):
+        dino = _tiny_dino()
+        opt = torch.optim.SGD(param_groups(dino.student_enc, dino.student_head), lr=0.1)
+        fit_dino(
+            dino,
+            DINOLoss(64),
+            opt,
+            wafers,
+            steps=5,
+            batch_size=2,
+            rng=np.random.default_rng(0),
+            track_fn=seen.append if track else None,
+            track_every=2 if track else 0,
+        )
+        return dino
+
+    plain, tracked = run(False), run(True)
+    assert seen == [0, 2, 4, 5]  # start, every 2 steps, and the end
+    for pa, pb in zip(plain.parameters(), tracked.parameters()):
+        assert torch.equal(pa, pb)  # tracking never changes training

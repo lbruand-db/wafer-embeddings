@@ -120,6 +120,12 @@ def _args(argv=None):
         help="Score a checkpoint on the train-side labeled kNN bank every N steps and keep "
         "the best (0 = off: train for a fixed schedule, no labels anywhere in training).",
     )
+    p.add_argument(
+        "--track-every",
+        type=int,
+        default=0,
+        help="Log student+teacher eval metrics every N steps (log-only; 0 = off).",
+    )
     p.add_argument("--seed", type=int, default=0)
     return p.parse_args(argv)
 
@@ -164,6 +170,13 @@ def load_train_table(dset, max_train: int, seed: int):
 
 
 EVAL_SPLITS = ("val", "test")
+TRACK_KEYS = (
+    "xgroup_knn_macro_recall",
+    "xgroup_precision@10",
+    "knn_macro_recall",
+    "map@10",
+    "cluster_nmi",
+)
 
 
 def load_eval_table(
@@ -283,6 +296,13 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
         emb = embed_all(dino, bank_wafers, device=device)
         return selection_score(emb, eval_labels[bank], N_CLASSES, groups=eval_groups[bank])
 
+    def _track(step: int) -> None:
+        keys = TRACK_KEYS
+        for which in ("student", "teacher"):
+            m = _eval("", which=which)
+            mlflow.log_metrics({f"track/{which}/{k}": m[k] for k in keys if k in m}, step=step)
+            log.info(f"track step {step} {which}: " + str({k: round(m[k], 4) for k in keys}))
+
     def _monitor(step: int, stats: dict[str, float]) -> None:
         stats = {("dino_loss" if k == "loss" else k): v for k, v in stats.items()}
         mlflow.log_metrics({f"train/{k}": v for k, v in stats.items()}, step=step)
@@ -320,6 +340,8 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
                 monitor=_monitor,
                 select_fn=_select if a.select_every else None,
                 select_every=a.select_every,
+                track_fn=_track if a.track_every else None,
+                track_every=a.track_every,
             )
 
         with stage(log, "embed + eval (G1)"):

@@ -58,6 +58,12 @@ env_variables:
   CLIP_GRAD: "0" # global grad-norm clip, 0 = off
   SELECT_EVERY: "0" # keep-best off: no labels in training (it would use train-split labels)
   EVAL_SPLIT: "val" # development protocol; "test" only for the final report
+  TRACK_EVERY: "0" # log student+teacher eval metrics every N steps (log-only)
+  EMBED_DIM: "384"
+  HEADS: "6"
+  # Any other jobs/train.py flags (recipe knobs: --n-local, --global-crop-area LO HI,
+  # --weight-decay-end, --pre-norm, --bottleneck, --die-noise, ...). Word-split on purpose.
+  EXTRA_ARGS: ""
   # ISAB (O(N*m)) is the default: WM-811K has large variable-size maps for which
   # full O(N^2) attention OOMs an A10 (SPECS.md §4 / de-risking R3).
   ATTENTION: "isab"
@@ -70,4 +76,5 @@ command: |
     --depth "$DEPTH" --max-tokens "$MAX_TOKENS" --lr "$LR" \
     --warmup-frac "$WARMUP_FRAC" --freeze-last-frac "$FREEZE_LAST_FRAC" \
     --clip-grad "$CLIP_GRAD" --select-every "$SELECT_EVERY" \
-    --eval-split "$EVAL_SPLIT"
+    --eval-split "$EVAL_SPLIT" --track-every "$TRACK_EVERY" \
+    --embed-dim "$EMBED_DIM" --heads "$HEADS" $EXTRA_ARGS

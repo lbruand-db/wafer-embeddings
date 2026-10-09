@@ -210,6 +210,8 @@ def fit_dino(
     monitor: Callable[[int, dict[str, float]], None] | None = None,
     select_fn: Callable[[], float] | None = None,
     select_every: int = 0,
+    track_fn: Callable[[int], None] | None = None,
+    track_every: int = 0,
 ) -> list[float]:
     """Run ``steps`` DINO steps with LR / teacher-temp / momentum schedules (ref [1]).
 
@@ -232,6 +234,10 @@ def fit_dino(
     every ``select_every`` steps, and the best-scoring weights are restored at the end
     (step 0 included, so a run that only degrades returns the untrained weights). The
     chosen step is reported to ``monitor`` as ``best_step`` / ``best_score``.
+
+    ``track_fn(step)`` is a log-only hook called before training and every
+    ``track_every`` steps (and at the end), e.g. to record val metrics over training. It
+    never changes the weights, so no label it looks at can steer training.
     """
     n = len(wafers)
     bs = min(batch_size, n)
@@ -256,6 +262,8 @@ def fit_dino(
 
     if select_fn is not None:
         _select(0)
+    if track_fn is not None and track_every:
+        track_fn(0)
     for step in range(1, steps + 1):
         lr = (
             base_lr * step / warmup
@@ -303,6 +311,8 @@ def fit_dino(
                 )
         if select_fn is not None and select_every and (step % select_every == 0 or step == steps):
             _select(step)
+        if track_fn is not None and track_every and (step % track_every == 0 or step == steps):
+            track_fn(step)
     if best is not None:
         score, best_step, snap = best
         dino.load_state_dict(snap)

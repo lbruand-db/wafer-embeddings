@@ -27,6 +27,7 @@ search = ["faiss-cpu>=1.8"]
 wafer-bootstrap = "wafer_embeddings.jobs.bootstrap:main"
 wafer-ingest = "wafer_embeddings.jobs.ingest:main"
 wafer-train = "wafer_embeddings.jobs.train:main"
+wafer-embed = "wafer_embeddings.jobs.embed:main"
 
 [dependency-groups]
 dev = [

@@ -128,3 +128,39 @@ def test_pyfunc_round_trip(tmp_path):
     emb = np.array(out["embedding"].tolist())
     assert emb.shape == (2, 16)
     np.testing.assert_allclose(np.linalg.norm(emb, axis=1), 1.0, atol=1e-5)
+
+
+def test_embed_frames_rows_match_encoder_and_metadata():
+    import pandas as pd
+
+    from wafer_embeddings.jobs.embed import OUTPUT_COLUMNS, embed_frames
+
+    enc, _ = _encoder()
+    maps = [_map(i, 9 + i, 11) for i in range(4)]
+    pdf = pd.DataFrame(
+        {
+            "id": [10, 11, 12, 13],
+            "height": [m.shape[0] for m in maps],
+            "width": [m.shape[1] for m in maps],
+            "wafer_map": [m.reshape(-1).tolist() for m in maps],
+            "label": ["Center", None, "Loc", None],
+            "label_id": [0, -1, 4, -1],
+            "split": ["train", "val", "test", "train"],
+            "lot": ["lotA", "lotA", "lotB", None],
+        }
+    )
+    (out,) = list(embed_frames(iter([pdf]), enc, "2"))
+    assert tuple(out.columns) == OUTPUT_COLUMNS
+    np.testing.assert_allclose(np.array(out["embedding"].tolist()), enc.embed_maps(maps), atol=1e-6)
+    for code, m in zip(out["map_code"], maps):
+        np.testing.assert_array_equal(decode_map(code), m)
+    assert out["n_dies"].tolist() == [int((m != NO_DIE).sum()) for m in maps]
+    np.testing.assert_allclose(
+        out["fail_frac"], [(m == FAIL).sum() / (m != NO_DIE).sum() for m in maps], rtol=1e-6
+    )
+    assert out["model_version"].unique().tolist() == ["2"] and out["id"].tolist() == [
+        10,
+        11,
+        12,
+        13,
+    ]

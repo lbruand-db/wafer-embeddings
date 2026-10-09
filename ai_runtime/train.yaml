@@ -15,7 +15,7 @@
 
 experiment_name: wafer-embeddings
 mlflow_experiment_directory: /Workspace/Users/lucas.bruand@databricks.com
-mlflow_run_name: dino-g1
+mlflow_run_name: dino # the job also sets RUN_NAME below
 
 compute:
   accelerator_type: GPU_1xA10
@@ -59,6 +59,7 @@ env_variables:
   SELECT_EVERY: "0" # keep-best off: no labels in training (it would use train-split labels)
   EVAL_SPLIT: "val" # development protocol; "test" only for the final report
   TRACK_EVERY: "0" # log student+teacher eval metrics every N steps (log-only)
+  RUN_NAME: "dino" # MLflow run name (the job opens its own run)
   EMBED_DIM: "384"
   HEADS: "6"
   # Any other jobs/train.py flags (recipe knobs: --n-local, --global-crop-area LO HI,
@@ -80,4 +81,4 @@ command: |
     --warmup-frac "$WARMUP_FRAC" --freeze-last-frac "$FREEZE_LAST_FRAC" \
     --clip-grad "$CLIP_GRAD" --select-every "$SELECT_EVERY" \
     --eval-split "$EVAL_SPLIT" --track-every "$TRACK_EVERY" \
-    --embed-dim "$EMBED_DIM" --heads "$HEADS" $EXTRA_ARGS
+    --embed-dim "$EMBED_DIM" --heads "$HEADS" --run-name "$RUN_NAME" $EXTRA_ARGS

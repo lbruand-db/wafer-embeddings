@@ -114,3 +114,12 @@ def test_track_every_is_validated():
     with pytest.raises(SystemExit):  # no training curve on the test split
         _args(base + ["--track-every", "100", "--eval-split", "test"])
     assert _args(base + ["--eval-split", "test"]).track_every == 0  # final report is fine
+
+
+def test_eval_metric_keys_namespace_by_split_and_model():
+    from wafer_embeddings.jobs.train import eval_metric_keys
+
+    got = eval_metric_keys("val", "teacher", {"xgroup_precision@10": 0.3, "knn_acc": 1})
+    assert got == {"val/teacher/xgroup_precision@10": 0.3, "val/teacher/knn_acc": 1.0}
+    assert all(isinstance(v, float) for v in got.values())
+    assert list(eval_metric_keys("test", "polar", {"map@10": 0.1})) == ["test/polar/map@10"]

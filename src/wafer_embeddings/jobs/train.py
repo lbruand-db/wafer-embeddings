@@ -126,6 +126,7 @@ def _args(argv=None):
         default=0,
         help="Log student+teacher eval metrics every N steps (log-only; 0 = off).",
     )
+    p.add_argument("--run-name", default="dino", help="MLflow run name.")
     p.add_argument("--seed", type=int, default=0)
     a = p.parse_args(argv)
     if a.track_every < 0:
@@ -134,6 +135,18 @@ def _args(argv=None):
         # a training curve on test invites tuning on it; test is scored once, at the end
         p.error("--track-every is development-only; not allowed with --eval-split test")
     return a
+
+
+def eval_metric_keys(split: str, model: str, metrics: dict[str, float]) -> dict[str, float]:
+    """Namespace eval metrics for MLflow as ``<split>/<model>/<metric>``.
+
+    One MLflow section per eval split (``val`` during development, ``test`` only for the
+    final report), so dev and final numbers never mix. ``model`` is ``student`` /
+    ``teacher`` (curves over training steps; step 0 is the untrained encoder) or
+    ``polar`` (the training-free bar, logged at the first and last step so it draws a
+    flat reference line next to the curves).
+    """
+    return {f"{split}/{model}/{k}": float(v) for k, v in metrics.items()}
 
 
 def train_recipe(a) -> dict:
@@ -309,24 +322,31 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
             m = _eval("", which=which)
             # g1_metrics omits a metric it can't compute (e.g. too few queries): skip it
             got = {k: m[k] for k in HEADLINE_KEYS if k in m}
-            mlflow.log_metrics({f"track/{which}/{k}": v for k, v in got.items()}, step=step)
+            mlflow.log_metrics(eval_metric_keys(a.eval_split, which, got), step=step)
             log.info(f"track step {step} {which}: " + str({k: round(v, 4) for k, v in got.items()}))
 
     def _monitor(step: int, stats: dict[str, float]) -> None:
         stats = {("dino_loss" if k == "loss" else k): v for k, v in stats.items()}
         mlflow.log_metrics({f"train/{k}": v for k, v in stats.items()}, step=step)
 
-    with mlflow.start_run(run_name="dino-g1"):
+    split = a.eval_split
+    with mlflow.start_run(run_name=a.run_name):
         mlflow.log_params(vars(a) | {"device": device, "n_classes": N_CLASSES})
-        # Same eval maps, freshly initialized encoder: the bar training must beat.
+        # AI Runtime may hand the job a pre-created run; the tag renames it either way
+        mlflow.set_tags({"mlflow.runName": a.run_name, "eval_split": split, "recipe": str(recipe)})
+        # Same eval maps, freshly initialized encoder: the bar training must beat. It is
+        # step 0 of the student/teacher curves (both start as the same weights).
         with stage(log, "embed + eval untrained encoder (baseline)"):
             baseline = _eval("untrained_")
-        mlflow.log_metrics(baseline)
+        untrained = {k.removeprefix("untrained_"): v for k, v in baseline.items()}
+        for which in ("student", "teacher"):
+            mlflow.log_metrics(eval_metric_keys(split, which, untrained), step=0)
         log.info(f"untrained baseline: {baseline}")
         # Training-free handcrafted defect descriptor: the bar a learned encoder must beat.
         with stage(log, "eval polar FAIL-histogram baseline"):
             polar = _eval("polar_", polar_fail_embedding(eval_wafers))
-        mlflow.log_metrics(polar)
+        polar_m = {k.removeprefix("polar_"): v for k, v in polar.items()}
+        mlflow.log_metrics(eval_metric_keys(split, "polar", polar_m), step=0)
         log.info(f"polar baseline: {polar}")
 
         with stage(log, "train DINO"):
@@ -357,7 +377,10 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
             metrics = _eval("")
             # DINO reports the EMA teacher (ref [1]); log it alongside the student
             teacher = _eval("teacher_", which="teacher")
-        mlflow.log_metrics(metrics | teacher)
+        teacher_m = {k.removeprefix("teacher_"): v for k, v in teacher.items()}
+        mlflow.log_metrics(eval_metric_keys(split, "student", metrics), step=a.steps)
+        mlflow.log_metrics(eval_metric_keys(split, "teacher", teacher_m), step=a.steps)
+        mlflow.log_metrics(eval_metric_keys(split, "polar", polar_m), step=a.steps)
         log.info(f"G1 metrics: {metrics}")
         log.info(f"teacher metrics: {teacher}")
         for k in HEADLINE_KEYS:

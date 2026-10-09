@@ -10,7 +10,7 @@ import base64
 
 import numpy as np
 
-TABLE = "wafer_map_embeddings"
+TABLE = "wafer_embeddings.wafer_map_embeddings_pg"  # synced table: <uc schema>.<uc table>
 # no-die, pass, fail -> background, light grey, red
 PALETTE = np.array([[255, 255, 255], [205, 205, 205], [214, 39, 40]], dtype=np.uint8)
 

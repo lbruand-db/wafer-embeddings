@@ -64,10 +64,10 @@ flowchart LR
     class pkl,maps,parquet,emb,pg store
     class train,run,embed compute
     class uc,serving,app,user serveNode
-    style data fill:#f7f9fb,stroke:#c9ced6
-    style model fill:#f7f9fb,stroke:#c9ced6
-    style index fill:#f7f9fb,stroke:#c9ced6
-    style serve fill:#f7f9fb,stroke:#c9ced6
+    style data fill:#f7f9fb,stroke:#c9ced6,color:#1b3139
+    style model fill:#f7f9fb,stroke:#c9ced6,color:#1b3139
+    style index fill:#f7f9fb,stroke:#c9ced6,color:#1b3139
+    style serve fill:#f7f9fb,stroke:#c9ced6,color:#1b3139
 ```
 
 | Piece | Where | Status |

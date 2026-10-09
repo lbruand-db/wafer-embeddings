@@ -113,11 +113,14 @@ token cap** (WM-811K's giant maps make full attention OOM, so ISAB is the defaul
 | **reference recipe, 10k steps (w128 d6)** | **0.405** | **0.352** |
 | **polar baseline (target)** | **0.468** | **0.392** |
 
-The 10k-step small run plateaus from ~4k steps. A full-size run (w384 d12, same recipe)
-is in progress: slower to start, still climbing at the halfway mark.
+The 10k-step small run plateaus from ~4k steps. **Capacity does not lift it at this
+budget:** the full-size run (w384 d12, same recipe and steps) ends at 0.407 / 0.348, the
+same as the small model, at ~3x the cost (it starts slower and was still creeping up as
+the LR decayed). Recipe work continues at the small size.
 
 **Next steps (CPU-tested, GPU-run with go-ahead):**
-1. Finish the capacity test (w384 d12); if it helps, tune its LR / schedule.
+1. ~~Capacity test~~ done: no gain at this budget (revisit with a tuned LR / longer
+   schedule once the recipe beats polar).
 2. Add **RankMe** (label-free effective rank on a fixed train probe set) to the tracked
    metrics.
 3. Cheap levers on the plateau: larger batch (DINO centering), higher token cap.

@@ -151,8 +151,17 @@ def _args(argv=None):
         help="Train maps (no labels) in the fixed RankMe probe set logged when tracking.",
     )
     p.add_argument("--run-name", default="dino", help="MLflow run name.")
-    p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--seed", type=int, default=0, help="Training seed (init, sample, views).")
+    p.add_argument(
+        "--eval-seed",
+        type=int,
+        default=None,
+        help="Eval-sample seed (which labeled maps, their token caps); default: --seed. "
+        "Fix it while varying --seed to measure training noise alone (GAPS 1.2).",
+    )
     a = p.parse_args(argv)
+    if a.eval_seed is None:
+        a.eval_seed = a.seed
     if a.track_every is None:
         a.track_every = 0 if a.eval_split == "test" else 1000
     if a.track_every < 0:
@@ -286,13 +295,13 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
         tbl = load_eval_table(
             dset,
             a.eval_cap,
-            a.seed,
+            a.eval_seed,
             balanced=a.eval_sampling == "balanced",
             query_split=a.eval_split,
         )
         rows = tbl.to_pylist()
         eval_wafers, eval_labels, eval_splits = wafers_from_rows(
-            rows, max_tokens=a.max_tokens, rng=rng
+            rows, max_tokens=a.max_tokens, rng=np.random.default_rng([a.eval_seed, 2])
         )
         # map shape = device proxy: devices span lots, so same-shape neighbours share labels
         eval_groups = np.array([f"{r['height']}x{r['width']}" for r in rows], dtype=object)

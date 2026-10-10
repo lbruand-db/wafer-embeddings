@@ -142,6 +142,15 @@ def test_track_every_is_validated():
     assert _args(base + ["--no-track-clustering"]).track_clustering is False
 
 
+def test_eval_seed_defaults_to_seed_and_can_be_fixed():
+    from wafer_embeddings.jobs.train import _args
+
+    base = ["--catalog", "c", "--schema", "s"]
+    assert _args(base + ["--seed", "3"]).eval_seed == 3
+    a = _args(base + ["--seed", "3", "--eval-seed", "0"])  # training noise only
+    assert (a.seed, a.eval_seed) == (3, 0)
+
+
 def test_eval_metric_keys_namespace_by_split_and_model():
     from wafer_embeddings.jobs.train import eval_metric_keys
 

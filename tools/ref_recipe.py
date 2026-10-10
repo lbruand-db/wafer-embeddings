@@ -84,10 +84,15 @@ def main(argv=None) -> None:  # pragma: no cover - CPU training run
     print(f"recipe {c.recipe}: {r} train={len(train_w)} eval={len(eval_w)}", flush=True)
     neighbours = None
     if a.nn_positives:
-        from wafer_embeddings.eval.baselines import polar_fail_embedding
+        from wafer_embeddings.eval.baselines import pixel_pca_embedding, polar_fail_embedding
         from wafer_embeddings.train.positives import descriptor_neighbours
 
-        neighbours = descriptor_neighbours(polar_fail_embedding(train_w), a.nn_positives)
+        desc = (
+            pixel_pca_embedding(train_w, dim=a.embed_dim)
+            if a.nn_descriptor == "pixel"
+            else polar_fail_embedding(train_w)
+        )
+        neighbours = descriptor_neighbours(desc, a.nn_positives)
 
     enc = PerDieViT(
         embed_dim=a.embed_dim,
@@ -132,6 +137,7 @@ def main(argv=None) -> None:  # pragma: no cover - CPU training run
         track_fn=track,
         track_every=a.track_every,
         neighbours=neighbours,
+        orientation_invariant=a.orientation_invariant,
     )
     print(f"DONE {c.recipe} secs={round(time.time() - t0)}", flush=True)
 

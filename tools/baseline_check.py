@@ -4,8 +4,9 @@
    two maps, over the query-vs-bank pairs a kNN probe actually uses. If same shape ->
    same label is common, an encoder that clusters by map shape gets class "accuracy" for
    free. A shape one-hot "encoder" is scored with the G1 metrics to show it.
-2. **Handcrafted bar**: the training-free polar FAIL-density descriptor
-   (``eval.baselines.polar_fail_embedding``), scored with the same G1 metrics.
+2. **Handcrafted bars**: the training-free polar FAIL-density descriptor
+   (``eval.baselines.polar_fail_embedding``) and the flattened-pixel + PCA raster
+   (``pixel_pca_embedding``), scored with the same G1 metrics.
 
 Run: uv run --extra jobs python tools/baseline_check.py <wafer_maps_parquet> [--eval-cap 1000]
 """
@@ -56,7 +57,7 @@ def main(argv=None) -> None:  # pragma: no cover - needs the parquet export
     import pyarrow.dataset as ds
 
     from wafer_embeddings.data.wm811k import CLASS_NAMES
-    from wafer_embeddings.eval.baselines import polar_fail_embedding
+    from wafer_embeddings.eval.baselines import pixel_pca_embedding, polar_fail_embedding
     from wafer_embeddings.jobs.train import load_eval_table
     from wafer_embeddings.train import g1_metrics, wafers_from_rows
 
@@ -74,11 +75,15 @@ def main(argv=None) -> None:  # pragma: no cover - needs the parquet export
     m_polar = g1_metrics(
         polar_fail_embedding(wafers), y, s, len(CLASS_NAMES), class_names=CLASS_NAMES, groups=shapes
     )
+    m_pixel = g1_metrics(
+        pixel_pca_embedding(wafers), y, s, len(CLASS_NAMES), class_names=CLASS_NAMES, groups=shapes
+    )
     out = {
         "leak": shape_leak(shapes, y, s, [r.get("lot") for r in rows]),
         "shape_onehot": {k: round(m_shape[k], 4) for k in KEYS},
         "polar": {k: round(m_polar[k], 4) for k in KEYS}
         | {k: round(v, 3) for k, v in m_polar.items() if k.startswith("knn_recall_")},
+        "pixel_pca": {k: round(m_pixel[k], 4) for k in KEYS},
     }
     print(json.dumps(out, indent=1))
 

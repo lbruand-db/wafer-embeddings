@@ -158,3 +158,25 @@ def test_eval_metric_keys_namespace_by_split_and_model():
     assert got == {"val/teacher/xgroup_precision@10": 0.3, "val/teacher/knn_acc": 1.0}
     assert all(isinstance(v, float) for v in got.values())
     assert list(eval_metric_keys("test", "polar", {"map@10": 0.1})) == ["test/polar/map@10"]
+
+
+def test_beats_polar_needs_both_cross_device_metrics():
+    from wafer_embeddings.jobs.train import beats_polar
+
+    polar = {"xgroup_knn_macro_recall": 0.44, "xgroup_precision@10": 0.36}
+    assert beats_polar({"xgroup_knn_macro_recall": 0.45, "xgroup_precision@10": 0.37}, polar)
+    assert not beats_polar({"xgroup_knn_macro_recall": 0.45, "xgroup_precision@10": 0.35}, polar)
+    assert not beats_polar({"xgroup_knn_macro_recall": 0.45}, polar)  # missing metric
+    assert not beats_polar({"xgroup_knn_macro_recall": 0.9, "xgroup_precision@10": 0.9}, {})
+
+
+def test_descriptor_and_orientation_flags():
+    from wafer_embeddings.jobs.train import _args
+
+    base = ["--catalog", "c", "--schema", "s"]
+    a = _args(base)
+    assert (a.nn_positives, a.nn_descriptor, a.orientation_invariant) == (0, "pixel", True)
+    a = _args(
+        base + ["--nn-positives", "5", "--nn-descriptor", "polar", "--no-orientation-invariant"]
+    )
+    assert (a.nn_positives, a.nn_descriptor, a.orientation_invariant) == (5, "polar", False)

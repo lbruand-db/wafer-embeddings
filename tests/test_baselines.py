@@ -1,6 +1,11 @@
 import numpy as np
 
-from wafer_embeddings.eval.baselines import polar_fail_embedding, polar_fail_features
+from wafer_embeddings.eval.baselines import (
+    pixel_grid_features,
+    pixel_pca_embedding,
+    polar_fail_embedding,
+    polar_fail_features,
+)
 from wafer_embeddings.tokenize.augment import rotate_coords
 from wafer_embeddings.tokenize.tokenizer import TokenizedWafer, tokenize
 from wafer_embeddings.data.mixedwm38 import FAIL, NO_DIE, PASS
@@ -53,4 +58,23 @@ def test_embedding_separates_center_from_edge_patterns():
     splits = np.array(["train"] * 4 + ["test"] * 4, dtype=object)
     emb = polar_fail_embedding(wafers)
     np.testing.assert_allclose(np.linalg.norm(emb, axis=1), 1.0, atol=1e-9)
+    assert g1_metrics(emb, labels, splits, n_classes=2, knn_k=2)["knn_acc"] == 1.0
+
+
+def test_pixel_grid_locates_fails_and_ignores_map_size():
+    f = pixel_grid_features(_center(31), size=8).reshape(8, 8)
+    assert f[3:5, 3:5].min() > 0.5 and f[0, :].max() == 0  # centre fails, edge passes
+    a, b = pixel_grid_features(_center(31), 8), pixel_grid_features(_center(61), 8)
+    assert np.linalg.norm(a - b) < 0.25 * np.linalg.norm(a)  # cells coarser than dies
+    empty = TokenizedWafer(np.zeros((0, 3), np.float32), np.zeros((0,), np.int64))
+    assert pixel_grid_features(empty, size=4).tolist() == [0.0] * 16
+
+
+def test_pixel_pca_embedding_separates_patterns():
+    wafers = [_center(31), _center(41), _edge_loc(31, 1), _edge_loc(41, 1)] * 2
+    labels = np.array([0, 0, 1, 1] * 2)
+    splits = np.array(["train"] * 4 + ["test"] * 4, dtype=object)
+    emb = pixel_pca_embedding(wafers, dim=4)
+    assert emb.shape == (8, 4)
+    np.testing.assert_allclose(np.linalg.norm(emb, axis=1), 1.0, atol=1e-5)  # float32
     assert g1_metrics(emb, labels, splits, n_classes=2, knn_k=2)["knn_acc"] == 1.0

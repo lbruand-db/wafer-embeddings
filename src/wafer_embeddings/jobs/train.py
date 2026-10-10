@@ -121,6 +121,20 @@ def _args(argv=None):
         help="Descriptor-guided positives: each wafer's K nearest train maps by polar FAIL "
         "descriptor; one random neighbour per step joins the student views (0 = off; label-free).",
     )
+    p.add_argument(
+        "--nn-descriptor",
+        default="pixel",
+        choices=["pixel", "polar"],
+        help="Descriptor for --nn-positives: the flattened FAIL raster + PCA (orientation-"
+        "aware; better neighbours on WM-811K) or the rotation-invariant polar histogram.",
+    )
+    p.add_argument(
+        "--orientation-invariant",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Random rotation / flip of every view. --no-orientation-invariant keeps the map "
+        "orientation (WM-811K maps are aligned; the orientation-aware pixel baseline wins).",
+    )
     p.add_argument("--die-noise", type=float, default=0.03, help="Pass<->fail flip prob.")
     p.add_argument(
         "--freeze-last-frac",
@@ -189,6 +203,18 @@ def eval_metric_keys(split: str, model: str, metrics: dict[str, float]) -> dict[
     flat reference line next to the curves).
     """
     return {f"{split}/{model}/{k}": float(v) for k, v in metrics.items()}
+
+
+G1_KEYS = ("xgroup_knn_macro_recall", "xgroup_precision@10")
+
+
+def beats_polar(trained: dict[str, float], polar: dict[str, float]) -> bool:
+    """Revised Gate G1 for one run (PLAN.md P1): above polar on both cross-device metrics.
+
+    "Beyond seed noise" needs several seeds, so a single run's pass is necessary, not
+    sufficient.
+    """
+    return all(trained.get(k, 0.0) > polar.get(k, float("inf")) for k in G1_KEYS)
 
 
 def train_recipe(a) -> dict:
@@ -277,7 +303,7 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
     import pyarrow.dataset as ds
     import torch
 
-    from wafer_embeddings.eval.baselines import polar_fail_embedding
+    from wafer_embeddings.eval.baselines import pixel_pca_embedding, polar_fail_embedding
     from wafer_embeddings.eval.metrics import effective_rank, rankme
     from wafer_embeddings.model.dino import DinoModel, DINOHead, DINOLoss
     from wafer_embeddings.model.encoder import PerDieViT, count_parameters
@@ -299,10 +325,13 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
         train_wafers, _, _ = wafers_from_rows(tbl.to_pylist(), max_tokens=a.max_tokens, rng=rng)
     neighbours = None
     if a.nn_positives:
-        with stage(log, f"descriptor neighbours (k={a.nn_positives}) of the train sample"):
-            neighbours = descriptor_neighbours(
-                polar_fail_embedding(train_wafers), a.nn_positives, device=device
+        with stage(log, f"{a.nn_descriptor} neighbours (k={a.nn_positives}) of the train sample"):
+            desc = (
+                pixel_pca_embedding(train_wafers, dim=a.embed_dim)
+                if a.nn_descriptor == "pixel"
+                else polar_fail_embedding(train_wafers)
             )
+            neighbours = descriptor_neighbours(desc, a.nn_positives, device=device)
     if a.eval_split == "test":
         log.warning("EVAL ON TEST SPLIT: final report only - do not tune on these numbers")
     with stage(log, f"load labeled eval ({a.eval_split} queries, {a.eval_sampling} sample)"):
@@ -426,6 +455,12 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
         polar_m = {k.removeprefix("polar_"): v for k, v in polar.items()}
         mlflow.log_metrics(eval_metric_keys(split, "polar", polar_m), step=0)
         log.info(f"polar baseline: {polar}")
+        # Spec baseline (SPECS.md §16 item 24): flattened FAIL raster + PCA, no training.
+        with stage(log, "eval pixel-PCA baseline"):
+            pixel = _eval("pixel_pca_", pixel_pca_embedding(eval_wafers, dim=a.embed_dim))
+        pixel_m = {k.removeprefix("pixel_pca_"): v for k, v in pixel.items()}
+        mlflow.log_metrics(eval_metric_keys(split, "pixel_pca", pixel_m), step=0)
+        log.info(f"pixel-PCA baseline: {pixel}")
 
         with stage(log, "train DINO"):
             fit_dino(
@@ -450,6 +485,7 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
                 track_fn=_track if a.track_every else None,
                 track_every=a.track_every,
                 neighbours=neighbours,
+                orientation_invariant=a.orientation_invariant,
             )
 
         with stage(log, "embed + eval (G1)"):
@@ -460,11 +496,13 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
         mlflow.log_metrics(eval_metric_keys(split, "student", metrics), step=a.steps)
         mlflow.log_metrics(eval_metric_keys(split, "teacher", teacher_m), step=a.steps)
         mlflow.log_metrics(eval_metric_keys(split, "polar", polar_m), step=a.steps)
+        mlflow.log_metrics(eval_metric_keys(split, "pixel_pca", pixel_m), step=a.steps)
         log.info(f"G1 metrics: {metrics}")
         log.info(f"teacher metrics: {teacher}")
         for k in HEADLINE_KEYS:
             log.info(
                 f"{k}: polar={polar.get('polar_' + k)} "
+                f"pixel_pca={pixel.get('pixel_pca_' + k)} "
                 f"untrained={baseline.get('untrained_' + k)} trained={metrics.get(k)} "
                 f"teacher={teacher.get('teacher_' + k)}"
             )
@@ -473,11 +511,9 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
         torch.save({"state_dict": encoder.state_dict(), "config": vars(a)}, path)
         mlflow.log_artifact(path, artifact_path="encoder")
 
-        gate = metrics.get("map@10", 0) >= 0.80 and metrics.get("cluster_nmi", 0) >= 0.85
-        log.info(
-            f"GATE G1 {'PASS' if gate else 'NOT MET'} "
-            f"(map@10={metrics.get('map@10')}, nmi={metrics.get('cluster_nmi')})"
-        )
+        gate = beats_polar(metrics, polar_m)
+        mlflow.log_metric(f"{split}/beats_polar", float(gate))
+        log.info(f"GATE G1 (single run; seed noise not accounted) {'PASS' if gate else 'NOT MET'}")
 
 
 if __name__ == "__main__":  # pragma: no cover

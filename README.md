@@ -188,8 +188,7 @@ Target workspace: `fevm-mmf-mlops-demo.cloud.databricks.com` · catalog
 
 ## Known gaps
 
-- Model registration (`jobs/register.py`) runs locally rather than as a job.
-- The model is 128-d (the spec targets 384) and trails the polar baseline on cross-device
-  recall; next steps are in [PLAN.md](SPEC/PLAN.md).
-- No `CREATE CATALOG` on the metastore, so the synced table lives in
-  `mmf_mlops_demo_catalog` rather than in its own Lakebase catalog.
+Open work is tracked in [`GAPS.md`](GAPS.md). The headline items: beat the polar baseline
+for a real Gate G1 (the served model is provisional), measure Lakebase ANN recall and p99
+latency (Gate G2), make registration a job inside one orchestrated workflow, and make the
+working training recipe the default.

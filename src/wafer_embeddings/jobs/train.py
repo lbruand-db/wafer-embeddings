@@ -114,6 +114,13 @@ def _args(argv=None):
     p.add_argument(
         "--local-crop-area", type=float, nargs=2, default=[0.05, 0.4], metavar=("LO", "HI")
     )
+    p.add_argument(
+        "--nn-positives",
+        type=int,
+        default=0,
+        help="Descriptor-guided positives: each wafer's K nearest train maps by polar FAIL "
+        "descriptor; one random neighbour per step joins the student views (0 = off; label-free).",
+    )
     p.add_argument("--die-noise", type=float, default=0.03, help="Pass<->fail flip prob.")
     p.add_argument(
         "--freeze-last-frac",
@@ -274,6 +281,7 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
     from wafer_embeddings.eval.metrics import effective_rank, rankme
     from wafer_embeddings.model.dino import DinoModel, DINOHead, DINOLoss
     from wafer_embeddings.model.encoder import PerDieViT, count_parameters
+    from wafer_embeddings.train.positives import descriptor_neighbours
 
     a = _args(argv)
     log = get_logger("wafer_embeddings.train")
@@ -289,6 +297,12 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
     with stage(log, "load train split (seeded random sample)"):
         tbl = load_train_table(dset, a.max_train, a.seed)
         train_wafers, _, _ = wafers_from_rows(tbl.to_pylist(), max_tokens=a.max_tokens, rng=rng)
+    neighbours = None
+    if a.nn_positives:
+        with stage(log, f"descriptor neighbours (k={a.nn_positives}) of the train sample"):
+            neighbours = descriptor_neighbours(
+                polar_fail_embedding(train_wafers), a.nn_positives, device=device
+            )
     if a.eval_split == "test":
         log.warning("EVAL ON TEST SPLIT: final report only - do not tune on these numbers")
     with stage(log, f"load labeled eval ({a.eval_split} queries, {a.eval_sampling} sample)"):
@@ -435,6 +449,7 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
                 select_every=a.select_every,
                 track_fn=_track if a.track_every else None,
                 track_every=a.track_every,
+                neighbours=neighbours,
             )
 
         with stage(log, "embed + eval (G1)"):

@@ -14,6 +14,7 @@ import numpy as np
 
 from wafer_embeddings.tokenize.augment import random_view
 from wafer_embeddings.tokenize.tokenizer import TokenizedWafer, cap_tokens, collate, tokenize
+from wafer_embeddings.train.positives import sample_neighbours
 
 
 def wafers_from_rows(
@@ -139,6 +140,7 @@ def train_step(
     clip_grad: float | None = None,
     stats: dict[str, float] | None = None,
     aug: dict | None = None,
+    positives: list[TokenizedWafer] | None = None,
 ) -> float:
     """One DINO optimization step over a batch of tokenized wafers.
 
@@ -148,15 +150,24 @@ def train_step(
     norm (DINO uses 3.0). If ``stats`` is given, it is filled with ``collapse_stats`` and
     the pre-clip ``grad_norm`` (costs one extra no-grad encoder pass, so only ask on log
     steps). ``aug`` holds extra ``random_view`` keyword arguments (augmentation knobs).
+    ``positives`` (one wafer per batch item, e.g. a descriptor neighbour) adds one global
+    view of each as an extra student view that must match the anchor's teacher views.
     """
     import torch
 
     views = build_views(
         wafers, rng, n_views=2, orientation_invariant=orientation_invariant, **(aug or {})
     )
+    if positives is not None:
+        global_aug = {
+            k: v for k, v in (aug or {}).items() if k not in ("n_local", "local_crop_area")
+        }
+        views += build_views(
+            positives, rng, n_views=1, orientation_invariant=orientation_invariant, **global_aug
+        )
     views = _to_device(views, device)
-    student = dino.student_views(views)  # all views (global + local)
-    teacher = dino.teacher_views(views[:2])  # global views only (ref [1])
+    student = dino.student_views(views)  # all views (global + local + positives)
+    teacher = dino.teacher_views(views[:2])  # the anchor's global views only (ref [1])
     if stats is not None:
         stats.update(collapse_stats(dino, loss_fn, teacher[0], views[0]))
     loss = loss_fn(student, teacher)
@@ -212,6 +223,7 @@ def fit_dino(
     select_every: int = 0,
     track_fn: Callable[[int], None] | None = None,
     track_every: int = 0,
+    neighbours: np.ndarray | None = None,
 ) -> list[float]:
     """Run ``steps`` DINO steps with LR / teacher-temp / momentum schedules (ref [1]).
 
@@ -239,6 +251,10 @@ def fit_dino(
     ``track_every`` steps, e.g. to record val metrics over training. Its last call (at
     ``steps``) comes after any keep-best restore, so it describes the returned weights. It
     never changes the weights, so no label it looks at can steer training.
+
+    ``neighbours`` ((N, k) indices into ``wafers``, e.g. ``positives.descriptor_neighbours``)
+    turns on descriptor-guided positives: each step, every batch wafer also brings one
+    random neighbour as an extra student view (see ``train_step``).
     """
     n = len(wafers)
     bs = min(batch_size, n)
@@ -283,6 +299,9 @@ def fit_dino(
 
         idx = rng.integers(0, n, size=bs)
         batch = [wafers[i] for i in idx]
+        positives = None
+        if neighbours is not None:
+            positives = [wafers[j] for j in sample_neighbours(neighbours, idx, rng)]
         log_step = step % log_every == 0 or step == steps
         stats: dict[str, float] | None = {} if log_step else None
         loss = train_step(
@@ -297,6 +316,7 @@ def fit_dino(
             clip_grad=clip_grad,
             stats=stats,
             aug=aug,
+            positives=positives,
         )
         losses.append(loss)
         if stats is not None:

@@ -82,6 +82,12 @@ def main(argv=None) -> None:  # pragma: no cover - CPU training run
     eval_w, eval_y, eval_s = wafers_from_rows(rows, max_tokens=a.max_tokens, rng=rng)
     shapes = np.array([f"{x['height']}x{x['width']}" for x in rows], dtype=object)
     print(f"recipe {c.recipe}: {r} train={len(train_w)} eval={len(eval_w)}", flush=True)
+    neighbours = None
+    if a.nn_positives:
+        from wafer_embeddings.eval.baselines import polar_fail_embedding
+        from wafer_embeddings.train.positives import descriptor_neighbours
+
+        neighbours = descriptor_neighbours(polar_fail_embedding(train_w), a.nn_positives)
 
     enc = PerDieViT(
         embed_dim=a.embed_dim,
@@ -125,6 +131,7 @@ def main(argv=None) -> None:  # pragma: no cover - CPU training run
         log_every=100,
         track_fn=track,
         track_every=a.track_every,
+        neighbours=neighbours,
     )
     print(f"DONE {c.recipe} secs={round(time.time() - t0)}", flush=True)
 

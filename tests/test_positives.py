@@ -9,7 +9,11 @@ from wafer_embeddings.model.dino import DinoModel, DINOHead, DINOLoss
 from wafer_embeddings.model.encoder import PerDieViT
 from wafer_embeddings.tokenize import tokenizer as tk
 from wafer_embeddings.train import fit_dino, train_step
-from wafer_embeddings.train.positives import descriptor_neighbours, sample_neighbours
+from wafer_embeddings.train.positives import (
+    descriptor_neighbours,
+    label_neighbours,
+    sample_neighbours,
+)
 
 
 def _unit(x):
@@ -88,3 +92,14 @@ def test_fit_dino_with_neighbours_trains():
         dino, loss_fn, opt, w, steps=3, batch_size=3, rng=np.random.default_rng(0), neighbours=nn
     )
     assert len(losses) == 3 and all(np.isfinite(losses))
+
+
+def test_label_neighbours_are_same_class_or_self():
+    labels = np.array([0, 0, 1, -1, 1, 1, 2])
+    nn = label_neighbours(labels, 4, np.random.default_rng(0))
+    assert nn.shape == (7, 4)
+    for i, row in enumerate(nn):
+        if labels[i] < 0 or (labels == labels[i]).sum() < 2:
+            assert (row == i).all()  # unlabeled / singleton class: plain DINO
+        else:
+            assert all(labels[j] == labels[i] and j != i for j in row)

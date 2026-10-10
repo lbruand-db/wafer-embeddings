@@ -64,6 +64,15 @@ def check_unscored(fqn: str, version: str, tags: dict) -> None:
         )
 
 
+def check_servable(run_id: str, tags: dict) -> None:
+    """Refuse a training run that saw train labels (an ablation, e.g. --label-positives)."""
+    if tags.get("uses_train_labels") == "true":
+        raise SystemExit(
+            f"run {run_id} used training labels (ablation); labels are evaluation-only, "
+            "so it can't be registered (SPECS.md §8.7)"
+        )
+
+
 def sample_input():
     """Two tiny maps in the Delta row layout, for the signature + input example."""
     import pandas as pd
@@ -125,6 +134,8 @@ def main(argv=None) -> None:  # pragma: no cover - needs a workspace
         )
         a.run_id = pick_run_id([r.info.run_id for r in runs], a.latest_run_name, a.since_ms)
         print(f"registering run {a.run_id} (latest finished {a.latest_run_name!r})")
+    if a.run_id:
+        check_servable(a.run_id, mlflow.get_run(a.run_id).data.tags)
     ckpt = a.checkpoint or mlflow.artifacts.download_artifacts(
         run_id=a.run_id, artifact_path="encoder/wafer_encoder.pt"
     )

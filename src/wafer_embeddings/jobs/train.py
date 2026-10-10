@@ -122,6 +122,13 @@ def _args(argv=None):
         "descriptor; one random neighbour per step joins the student views (0 = off; label-free).",
     )
     p.add_argument(
+        "--label-positives",
+        type=int,
+        default=0,
+        help="ABLATION ONLY (uses train labels; such a run can't be registered): K random "
+        "same-class train maps as positives, SWaCo-style (SPECS.md §16 item 3). 0 = off.",
+    )
+    p.add_argument(
         "--nn-descriptor",
         default="pixel",
         choices=["pixel", "polar"],
@@ -193,6 +200,8 @@ def _args(argv=None):
         a.track_every = 0 if a.eval_split == "test" else 1000
     if a.track_every < 0:
         p.error("--track-every must be >= 0")
+    if a.label_positives and a.nn_positives:
+        p.error("--label-positives and --nn-positives are exclusive")
     if a.track_every and a.eval_split == "test":
         # a training curve on test invites tuning on it; test is scored once, at the end
         p.error("--track-every is development-only; not allowed with --eval-split test")
@@ -313,7 +322,7 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
     from wafer_embeddings.eval.metrics import effective_rank, rankme
     from wafer_embeddings.model.dino import DinoModel, DINOHead, DINOLoss
     from wafer_embeddings.model.encoder import PerDieViT, count_parameters
-    from wafer_embeddings.train.positives import descriptor_neighbours
+    from wafer_embeddings.train.positives import descriptor_neighbours, label_neighbours
 
     a = _args(argv)
     log = get_logger("wafer_embeddings.train")
@@ -328,7 +337,9 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
     dset = ds.dataset(pq, format="parquet")
     with stage(log, "load train split (seeded random sample)"):
         tbl = load_train_table(dset, a.max_train, a.seed)
-        train_wafers, _, _ = wafers_from_rows(tbl.to_pylist(), max_tokens=a.max_tokens, rng=rng)
+        train_wafers, train_labels, _ = wafers_from_rows(
+            tbl.to_pylist(), max_tokens=a.max_tokens, rng=rng
+        )
     neighbours = None
     if a.nn_positives:
         with stage(log, f"{a.nn_descriptor} neighbours (k={a.nn_positives}) of the train sample"):
@@ -338,6 +349,11 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
                 else polar_fail_embedding(train_wafers)
             )
             neighbours = descriptor_neighbours(desc, a.nn_positives, device=device)
+    if a.label_positives:
+        log.warning("ABLATION: same-class positives use TRAIN LABELS (diagnostic, not servable)")
+        neighbours = label_neighbours(
+            train_labels, a.label_positives, np.random.default_rng(a.seed)
+        )
     if a.eval_split == "test":
         log.warning("EVAL ON TEST SPLIT: final report only - do not tune on these numbers")
     with stage(log, f"load labeled eval ({a.eval_split} queries, {a.eval_sampling} sample)"):
@@ -446,7 +462,15 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
             }
         )
         # AI Runtime may hand the job a pre-created run; the tag renames it either way
-        mlflow.set_tags({"mlflow.runName": a.run_name, "eval_split": split, "recipe": str(recipe)})
+        mlflow.set_tags(
+            {
+                "mlflow.runName": a.run_name,
+                "eval_split": split,
+                "recipe": str(recipe),
+                # register.py refuses runs that saw training labels
+                "uses_train_labels": str(bool(a.label_positives)).lower(),
+            }
+        )
         # Same eval maps, freshly initialized encoder: the bar training must beat. It is
         # step 0 of the student/teacher curves (both start as the same weights).
         with stage(log, "embed + eval untrained encoder (baseline)"):

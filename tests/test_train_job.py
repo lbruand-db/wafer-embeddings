@@ -180,3 +180,25 @@ def test_descriptor_and_orientation_flags():
         base + ["--nn-positives", "5", "--nn-descriptor", "polar", "--no-orientation-invariant"]
     )
     assert (a.nn_positives, a.nn_descriptor, a.orientation_invariant) == (5, "polar", False)
+
+
+def test_label_positives_is_exclusive_with_descriptor_positives():
+    import pytest
+
+    from wafer_embeddings.jobs.train import _args
+
+    base = ["--catalog", "c", "--schema", "s"]
+    assert _args(base + ["--label-positives", "3"]).label_positives == 3
+    with pytest.raises(SystemExit):
+        _args(base + ["--label-positives", "3", "--nn-positives", "5"])
+
+
+def test_register_refuses_label_trained_runs():
+    import pytest
+
+    from wafer_embeddings.jobs.register import check_servable
+
+    check_servable("r1", {"uses_train_labels": "false"})
+    check_servable("r0", {})  # runs from before the tag
+    with pytest.raises(SystemExit, match="used training labels"):
+        check_servable("r2", {"uses_train_labels": "true"})

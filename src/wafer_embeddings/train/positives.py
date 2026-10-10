@@ -44,3 +44,23 @@ def sample_neighbours(
     """One random neighbour (of the ``k`` stored) per batch index."""
     pick = rng.integers(0, neighbours.shape[1], size=len(idx))
     return neighbours[idx, pick]
+
+
+def label_neighbours(labels: np.ndarray, k: int, rng: np.random.Generator) -> np.ndarray:
+    """(N, k) same-class positives: SWaCo-style ablation (SPECS.md §16 item 3).
+
+    **Uses train labels in training**, so it is a diagnostic only (does pure DINO suffer
+    from same-class false negatives?), never a model to serve. A labeled wafer gets ``k``
+    random other wafers of its class (with replacement); an unlabeled one (label < 0) or
+    the only member of its class gets itself, i.e. plain DINO for that wafer.
+    """
+    labels = np.asarray(labels)
+    out = np.repeat(np.arange(len(labels))[:, None], k, axis=1)
+    for c in np.unique(labels[labels >= 0]):
+        members = np.nonzero(labels == c)[0]
+        if len(members) < 2:
+            continue
+        for i in members:
+            others = members[members != i]
+            out[i] = rng.choice(others, size=k, replace=True)
+    return out

@@ -150,6 +150,14 @@ cd app && npm run build && python server.py   # needs PGHOST + LAKEBASE_ENDPOINT
 
 CI (`.github/workflows/ci.yml`) runs black, ty, pytest and the JS tests on every push.
 
+Behind a package proxy that blocks releases younger than a week (the Databricks internal
+PyPI / npm proxies do), resolve as of a week ago instead of pinning around it:
+
+```bash
+export UV_EXCLUDE_NEWER=$(date -u -v-7d +%FT%TZ)   # GNU date: -d '7 days ago'
+export npm_config_before=$(date -u -v-7d +%F)
+```
+
 ## Databricks pipeline
 
 Everything is created from code, idempotently (SPECS §11.8 / N7); re-running any step

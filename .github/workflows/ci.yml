@@ -11,7 +11,7 @@ concurrency:
 
 jobs:
   lint-type-test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04 # pinned: ubuntu-latest moves between LTS images on its own
     steps:
       - uses: actions/checkout@v7
 

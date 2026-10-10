@@ -58,7 +58,7 @@ measured.
 | 4.5 | **No teardown** target (SPECS §11.8). | One command removes the endpoint, app, Lakebase project, synced table and Delta outputs. |
 | 4.6 | **Dev-only target.** Resources carry the `dev_lucas_bruand_` prefix; no `prod` target, no service-principal `run_as`. | A `prod` target with an SP identity. |
 | 4.7 | **GPU serving tier untested** (§16 item 18: log from a GPU runtime, `GPU_SMALL`). Only needed for larger models / throughput. | Endpoint healthy on GPU, or explicitly descoped. |
-| 4.8 | **No dedicated Lakebase UC catalog** — no `CREATE CATALOG` on the metastore, so the synced table lives in `mmf_mlops_demo_catalog`. | Catalog granted and the synced table moved, or accepted as-is. |
+| 4.8 | **No dedicated Lakebase UC catalog** — no `CREATE CATALOG` on the metastore, so the synced table lives in `mmf_mlops_demo_catalog`. Keep the catalog as is but just do a CREATE CATALOG IF NOT EXISTS. ✅ **Done (2026-10-10):** the bootstrap checks `SHOW CATALOGS LIKE` and runs `CREATE CATALOG IF NOT EXISTS` only when the catalog is missing (UC checks the metastore privilege before existence, so the bare statement fails with PERMISSION_DENIED even as a no-op here). Live run: catalog exists → skipped. | Accepted as-is: one catalog, created if missing. |
 
 ## 5. Operations & cost
 

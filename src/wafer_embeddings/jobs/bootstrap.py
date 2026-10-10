@@ -21,20 +21,32 @@ def _check_ident(kind: str, value: str) -> str:
     return value
 
 
-def build_bootstrap_sql(catalog: str, schema: str, volume: str) -> list[str]:
-    """Return idempotent DDL to ensure the schema + volume exist.
+def build_bootstrap_sql(
+    catalog: str, schema: str, volume: str, catalog_exists: bool = True
+) -> list[str]:
+    """Return idempotent DDL to ensure the catalog, schema and volume exist.
 
-    Does NOT create the catalog: it is assumed to pre-exist at the metastore level
-    (SPECS.md §11.8). Every statement is ``IF NOT EXISTS`` so re-runs are no-ops.
+    ``CREATE CATALOG IF NOT EXISTS`` is emitted **only when the catalog is missing**:
+    Unity Catalog checks the metastore ``CREATE CATALOG`` privilege before existence, so
+    the statement fails (PERMISSION_DENIED) even as a no-op for users who don't hold it.
+    The caller checks existence first (``catalog_exists``). Every other statement is
+    ``IF NOT EXISTS`` so re-runs are no-ops (SPECS.md §11.8).
     """
     cat = _check_ident("catalog", catalog)
     sch = _check_ident("schema", schema)
     vol = _check_ident("volume", volume)
-    return [
+    create = [] if catalog_exists else [f"CREATE CATALOG IF NOT EXISTS {cat}"]
+    return create + [
         f"USE CATALOG {cat}",
         f"CREATE SCHEMA IF NOT EXISTS {cat}.{sch}",
         f"CREATE VOLUME IF NOT EXISTS {cat}.{sch}.{vol}",
     ]
+
+
+def catalog_exists(spark, catalog: str) -> bool:
+    """True if ``catalog`` is visible to the caller (no privilege needed beyond USE)."""
+    cat = _check_ident("catalog", catalog)
+    return any(row[0] == cat for row in spark.sql(f"SHOW CATALOGS LIKE '{cat}'").collect())
 
 
 def _get_spark():  # pragma: no cover - requires a Databricks runtime
@@ -49,7 +61,7 @@ def _get_spark():  # pragma: no cover - requires a Databricks runtime
 
 
 def main(argv: list[str] | None = None) -> None:  # pragma: no cover - needs Spark
-    parser = argparse.ArgumentParser(description="Bootstrap UC schema + volume.")
+    parser = argparse.ArgumentParser(description="Bootstrap UC catalog + schema + volume.")
     parser.add_argument("--catalog", required=True)
     parser.add_argument("--schema", required=True)
     parser.add_argument("--volume", required=True)
@@ -59,7 +71,9 @@ def main(argv: list[str] | None = None) -> None:  # pragma: no cover - needs Spa
 
     log = get_logger("wafer_embeddings.bootstrap")
     spark = _get_spark()
-    for stmt in build_bootstrap_sql(args.catalog, args.schema, args.volume):
+    exists = catalog_exists(spark, args.catalog)
+    log.info(f"catalog {args.catalog}: {'exists' if exists else 'missing -> will create'}")
+    for stmt in build_bootstrap_sql(args.catalog, args.schema, args.volume, exists):
         log.info(stmt)
         spark.sql(stmt)
     log.info("done")

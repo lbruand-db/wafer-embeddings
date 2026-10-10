@@ -550,8 +550,12 @@ to other wafer datasets and binning setups.
 ### 11.8 Reproducibility — from scratch, programmatically (N7)
 Nothing is created by hand. The bundle plus a **bootstrap job** (Databricks SDK/CLI)
 create and wire everything, **idempotently** (safe to re-run):
-1. `USE CATALOG mmf_mlops_demo_catalog`; **create schema + volume** if absent (the schema
-   exists today out-of-band — the bundle still declares it so a clean workspace reproduces).
+1. **Create the catalog if missing** (`SHOW CATALOGS LIKE` first, then
+   `CREATE CATALOG IF NOT EXISTS` only when absent — Unity Catalog checks the metastore
+   `CREATE CATALOG` privilege before existence, so the bare statement fails for users
+   without it even when the catalog exists); `USE CATALOG mmf_mlops_demo_catalog`;
+   **create schema + volume** if absent. A single catalog holds everything, including the
+   Lakebase synced table.
 2. **Ingest WM-811K** from `LSWMD.pkl` in the volume: stream → clean → dedup → split →
    Delta, plus a parquet export for the AI Runtime trainer (§7, §11.3).
 3. **Provision Lakebase** (bootstrap job task `lakebase`, `jobs/lakebase.py`): project,

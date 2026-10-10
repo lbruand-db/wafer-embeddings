@@ -562,7 +562,8 @@ create and wire everything, **idempotently** (safe to re-run):
    Lakebase Search (REST `search-extensions`), database, `lakebase_vector`, synced table +
    `lakebase_ann` index + app grants (the embed job re-runs it with `--refresh`).
 4. **Train → register → serve** (train on AI Runtime, register to UC, create the endpoint).
-Expose one-shot **`bundle deploy` + bootstrap** and a **teardown** target. **Pin
+Expose one-shot **`bundle deploy` + bootstrap** and a **teardown**: `jobs/teardown.py`
+(code-managed resources, `--scope serving|all`, dry run by default) + `bundle destroy`. **Pin
 everything** — a modern serverless `environment_version` and all deps — because the
 default serverless env is minimal and old (§16 item 17): no mlflow/torch, Python 3.10.12,
 `databricks-sdk` 0.20.0. No notebook-only / click-ops steps may be load-bearing.

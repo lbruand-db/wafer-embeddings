@@ -175,6 +175,14 @@ databricks bundle run publish --profile mmf
 databricks bundle run wafer_search --profile mmf
 ```
 
+Teardown (dry run by default; add `--yes` to delete):
+
+```bash
+uv run --extra jobs python -m wafer_embeddings.jobs.teardown \
+  --catalog mmf_mlops_demo_catalog --schema wafer_embeddings --scope serving   # or --scope all
+databricks bundle destroy --profile mmf   # the bundle-owned jobs + app
+```
+
 Promotion is explicit: a model registered as `candidate` can be promoted later by setting
 the `champion` alias and running `publish`. For a cheap end-to-end check, deploy with
 `--var train_command=../ai_runtime/commands/train_smoke.sh` and run the pipeline with

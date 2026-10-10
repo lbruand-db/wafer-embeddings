@@ -1,11 +1,18 @@
 """Batch-embed every wafer map with the registered encoder -> Delta (SPECS.md §10).
 
-Reads ``<catalog>.<schema>.wafer_maps``, embeds each map with the UC model (default alias
-``@champion``) and writes ``<catalog>.<schema>.wafer_map_embeddings`` with the embedding,
-the metadata the search app filters/displays on, and a compact ``map_code`` for drawing
-the map. Change data feed is enabled so the table can be synced into Lakebase (§9).
+Two steps, each in the environment it needs:
 
-The per-batch work is the pure, CI-tested :func:`embed_frames`; ``main`` is Spark/UC glue.
+1. :func:`main_volume` (AI Runtime GPU, ``ai_runtime/embed.yaml``): embed the volume's
+   parquet export with the UC model (default alias ``@champion``) into parquet files.
+2. :func:`main_load` (serverless Spark, bundle job ``embed``): load them into
+   ``<catalog>.<schema>.wafer_map_embeddings`` with change data feed on, for the
+   Lakebase synced table (§9).
+
+Rows carry the embedding, the metadata the search app filters/displays on, and a compact
+``map_code`` for drawing the map. Embedding inside Spark (``mapInPandas``) was removed:
+serverless Python workers run out of memory importing CUDA torch.
+
+The per-batch work is the pure, CI-tested :func:`embed_frames` / :func:`embed_parquet`.
 """
 
 from __future__ import annotations
@@ -99,11 +106,9 @@ def _args(argv=None):
     p = argparse.ArgumentParser(description="Batch-embed wafer maps with the UC encoder.")
     p.add_argument("--catalog", required=True)
     p.add_argument("--schema", required=True)
-    p.add_argument("--source", default="wafer_maps")
     p.add_argument("--target", default="wafer_map_embeddings")
     p.add_argument("--model", default="wafer_encoder")
     p.add_argument("--alias", default="champion")
-    p.add_argument("--partitions", type=int, default=64)
     p.add_argument("--limit", type=int, default=0, help="Rows to embed (0 = all).")
     p.add_argument("--volume", default="raw")
     p.add_argument("--out", default="wafer_map_embeddings_parquet", help="Volume subdir.")
@@ -127,9 +132,8 @@ def _resolve_checkpoint(catalog: str, schema: str, model: str, alias: str):
 def main_volume(argv=None) -> None:  # pragma: no cover - runs on AI Runtime (GPU)
     """Embed the volume's parquet export -> parquet on the volume (no Spark).
 
-    Serverless Spark Python workers run out of memory importing CUDA torch, so the heavy
-    step runs on AI Runtime (proven torch env, GPU); ``main_load`` then loads the result
-    into Delta.
+    Runs on AI Runtime (proven torch env, GPU); ``main_load`` then loads the result into
+    Delta.
     """
     import pyarrow.dataset as ds
     import torch
@@ -173,66 +177,5 @@ def main_load(argv=None) -> None:  # pragma: no cover - needs Spark
     log.info(f"loaded {spark.read.table(target).count()} rows from {src} into {target}")
 
 
-def main(argv=None) -> None:  # pragma: no cover - needs Spark + UC
-    """In-Spark embedding (mapInPandas). Needs Python workers with room for torch; on
-    serverless they OOM importing CUDA torch, so prefer ``main_volume`` + ``main_load``."""
-    from databricks.sdk.runtime import spark  # type: ignore
-    from pyspark.sql import types as T  # ty: ignore[unresolved-import]
-
-    from wafer_embeddings.obs import get_logger, stage
-
-    a = _args(argv)
-    log = get_logger("wafer_embeddings.embed")
-    with stage(log, f"resolve {a.model}@{a.alias}"):
-        version, ckpt = _resolve_checkpoint(a.catalog, a.schema, a.model, a.alias)
-        ckpt_bytes = open(ckpt, "rb").read()  # shipped to executors in the UDF closure
-    log.info(f"checkpoint {len(ckpt_bytes) / 1e6:.1f} MB from {ckpt}")
-
-    def _udf(frames):
-        import io
-
-        import torch
-
-        from wafer_embeddings.serving.encoder import WaferEncoder
-
-        torch.set_num_threads(max(1, (torch.get_num_threads() or 1)))
-        ck = torch.load(io.BytesIO(ckpt_bytes), map_location="cpu", weights_only=False)
-        enc = WaferEncoder(ck["state_dict"], ck["config"])
-        yield from embed_frames(frames, enc, str(version))
-
-    schema = T.StructType(
-        [
-            T.StructField("id", T.LongType(), False),
-            T.StructField("embedding", T.ArrayType(T.FloatType()), False),
-            T.StructField("map_code", T.StringType(), False),
-            T.StructField("label", T.StringType(), True),
-            T.StructField("label_id", T.IntegerType(), False),
-            T.StructField("split", T.StringType(), False),
-            T.StructField("lot", T.StringType(), True),
-            T.StructField("height", T.IntegerType(), False),
-            T.StructField("width", T.IntegerType(), False),
-            T.StructField("n_dies", T.IntegerType(), False),
-            T.StructField("fail_frac", T.FloatType(), False),
-            T.StructField("model_version", T.StringType(), False),
-        ]
-    )
-    src = spark.read.table(f"{a.catalog}.{a.schema}.{a.source}")
-    if a.limit:
-        src = src.limit(a.limit)
-    target = f"{a.catalog}.{a.schema}.{a.target}"
-    with stage(log, f"embed -> {target}"):
-        (
-            src.repartition(a.partitions)
-            .mapInPandas(_udf, schema=schema)
-            .write.mode("overwrite")
-            .option("overwriteSchema", "true")
-            .option("delta.enableChangeDataFeed", "true")
-            .saveAsTable(target)
-        )
-    spark.sql(f"ALTER TABLE {target} SET TBLPROPERTIES (delta.enableChangeDataFeed = true)")
-    n = spark.read.table(target).count()
-    log.info(f"wrote {n} embeddings (model v{version}) to {target}")
-
-
 if __name__ == "__main__":  # pragma: no cover
-    main()
+    main_volume()

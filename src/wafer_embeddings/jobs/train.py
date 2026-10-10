@@ -32,6 +32,16 @@ from wafer_embeddings.train import (
 N_CLASSES = len(CLASS_NAMES)
 
 
+# The pre-2026-10-09 recipe (superseded: it did not beat the untrained encoder), kept
+# reproducible. Defaults below are the R1 recipe behind wafer_encoder v2 (PLAN.md P1).
+LEGACY_RECIPE = (
+    "--embed-dim 384 --heads 6 --depth 12 --attention full --max-tokens 4096 "
+    "--batch-size 128 --steps 2000 --max-train 50000 --lr 5e-4 --weight-decay 0 "
+    "--weight-decay-end 0 --n-local 0 --global-crop-area 0.81 0.81 --die-noise 0.005 "
+    "--no-pre-norm --out-dim 1024 --bottleneck 64 --freeze-last-frac 0.1 --clip-grad 0"
+)
+
+
 def _args(argv=None):
     p = argparse.ArgumentParser(description="DINO pretrain + G1 eval (WM-811K).")
     p.add_argument("--catalog", required=True)
@@ -39,11 +49,11 @@ def _args(argv=None):
     p.add_argument("--table", default="wafer_maps")
     p.add_argument("--volume", default="raw", help="UC volume holding wafer_maps_parquet.")
     p.add_argument("--experiment", default=None, help="MLflow experiment (default: AI Runtime's).")
-    p.add_argument("--max-train", type=int, default=50000, help="Train maps to sample (0=all).")
+    p.add_argument("--max-train", type=int, default=100000, help="Train maps to sample (0=all).")
     p.add_argument(
         "--eval-cap",
         type=int,
-        default=5000,
+        default=1000,
         help="Labeled maps per eval side: val/test queries, and train maps for the kNN bank.",
     )
     p.add_argument(
@@ -58,60 +68,60 @@ def _args(argv=None):
         choices=list(EVAL_SPLITS),
         help="Query split: 'val' for development; 'test' only for the final report.",
     )
-    p.add_argument("--max-tokens", type=int, default=4096, help="Cap dies/wafer (GPU mem).")
+    p.add_argument("--max-tokens", type=int, default=512, help="Cap dies/wafer (GPU mem).")
     p.add_argument(
         "--grad-checkpoint",
         action=argparse.BooleanOptionalAction,
         default=True,
         help="Gradient-checkpoint encoder blocks (fits depth-12 in A10 memory).",
     )
-    p.add_argument("--steps", type=int, default=2000)
-    p.add_argument("--batch-size", type=int, default=128)
-    p.add_argument("--embed-dim", type=int, default=384)
-    p.add_argument("--depth", type=int, default=12)
-    p.add_argument("--heads", type=int, default=6)
-    p.add_argument("--attention", default="full", choices=["full", "isab"])
-    p.add_argument("--out-dim", type=int, default=1024, help="DINO prototype count.")
-    p.add_argument("--bottleneck", type=int, default=64, help="DINO head bottleneck dim.")
+    p.add_argument("--steps", type=int, default=10000)
+    p.add_argument("--batch-size", type=int, default=32)
+    p.add_argument("--embed-dim", type=int, default=128)
+    p.add_argument("--depth", type=int, default=6)
+    p.add_argument("--heads", type=int, default=4)
+    p.add_argument("--attention", default="isab", choices=["full", "isab"])
+    p.add_argument("--out-dim", type=int, default=2048, help="DINO prototype count.")
+    p.add_argument("--bottleneck", type=int, default=256, help="DINO head bottleneck dim.")
     p.add_argument(
         "--pre-norm",
         action=argparse.BooleanOptionalAction,
-        default=False,
+        default=True,
         help="Pre-LN attention blocks + final LayerNorm (ViT/DINO form).",
     )
-    p.add_argument("--lr", type=float, default=5e-4, help="Peak LR (0 = 5e-4*batch/256 rule).")
+    p.add_argument("--lr", type=float, default=0.0, help="Peak LR (0 = 5e-4*batch/256 rule).")
     p.add_argument(
         "--weight-decay",
         type=float,
-        default=0.0,
+        default=0.04,
         help="AdamW weight decay on weights only (biases/norms never decayed; 0 = off).",
     )
     p.add_argument(
         "--weight-decay-end",
         type=float,
-        default=None,
+        default=0.4,
         help="If set, cosine weight-decay schedule weight-decay -> this (DINO: 0.04 -> 0.4).",
     )
-    p.add_argument("--n-local", type=int, default=0, help="DINO local crops per wafer.")
+    p.add_argument("--n-local", type=int, default=6, help="DINO local crops per wafer.")
     p.add_argument(
         "--global-crop-area",
         type=float,
         nargs=2,
-        default=None,
+        default=[0.4, 1.0],
         metavar=("LO", "HI"),
-        help="Random global-crop area range (DINO: 0.4 1.0); default: fixed 0.9 side.",
+        help="Random global-crop area range (DINO 0.4 1.0; 0.81 0.81 = the old fixed 0.9 side).",
     )
     p.add_argument(
         "--local-crop-area", type=float, nargs=2, default=[0.05, 0.4], metavar=("LO", "HI")
     )
-    p.add_argument("--die-noise", type=float, default=0.005, help="Pass<->fail flip prob.")
+    p.add_argument("--die-noise", type=float, default=0.03, help="Pass<->fail flip prob.")
     p.add_argument(
         "--freeze-last-frac",
         type=float,
-        default=0.1,
+        default=0.01,
         help="Freeze the DINO prototype layer for this fraction of steps (stabilizer).",
     )
-    p.add_argument("--clip-grad", type=float, default=0.0, help="Global grad-norm clip (0 = off).")
+    p.add_argument("--clip-grad", type=float, default=3.0, help="Global grad-norm clip (0 = off).")
     p.add_argument("--warmup-frac", type=float, default=0.1, help="LR linear-warmup fraction.")
     p.add_argument(
         "--select-every",
@@ -123,8 +133,9 @@ def _args(argv=None):
     p.add_argument(
         "--track-every",
         type=int,
-        default=0,
-        help="Log student+teacher eval metrics every N steps (log-only; 0 = off).",
+        default=None,
+        help="Log student+teacher eval metrics every N steps (log-only; 0 = off). "
+        "Default: 1000 on val, off on test (no training curve on the test split).",
     )
     p.add_argument(
         "--probe-size",
@@ -135,6 +146,8 @@ def _args(argv=None):
     p.add_argument("--run-name", default="dino", help="MLflow run name.")
     p.add_argument("--seed", type=int, default=0)
     a = p.parse_args(argv)
+    if a.track_every is None:
+        a.track_every = 0 if a.eval_split == "test" else 1000
     if a.track_every < 0:
         p.error("--track-every must be >= 0")
     if a.track_every and a.eval_split == "test":

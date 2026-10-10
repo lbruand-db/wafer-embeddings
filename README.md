@@ -163,7 +163,7 @@ databricks bundle run bootstrap --profile mmf
 # 2. Ingest WM-811K -> Delta wafer_maps + parquet export (lot-grouped splits)
 databricks bundle run ingest --profile mmf
 
-# 3. DINO pretraining on serverless GPU (recipe flags via EXTRA_ARGS, see the YAML)
+# 3. DINO pretraining on serverless GPU (defaults = the R1 recipe; overrides via the YAML)
 databricks air run --file ai_runtime/train.yaml --profile mmf
 
 # 4. Register the trained encoder in UC (sets @champion)

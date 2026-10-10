@@ -53,7 +53,7 @@ measured.
 |---|---|---|
 | 4.1 | **Registration runs locally** (`uv run … jobs.register`). | A bundle / AI Runtime task registers and sets `@champion`. |
 | 4.2 | **No orchestrated flow.** train → register → embed → load + Lakebase sync are separate commands. | One workflow, re-runnable end to end. |
-| 4.3 | **Training defaults ≠ the working recipe.** `jobs/train.py` / `ai_runtime/train.yaml` still default to the old recipe (depth 12, LR 5e-4, no local crops, 4,096 tokens, head 1024/64); the R1 recipe that works is only reachable through `EXTRA_ARGS`. | The R1 recipe is the default (YAML + argparse), old one reproducible via flags. |
+| 4.3 | ~~**Training defaults ≠ the working recipe.**~~ ✅ **Done (2026-10-10):** `jobs/train.py` + `ai_runtime/train.yaml` default to the R1 recipe (w128 d6 ISAB pre-LN, 512 tokens, bs32 × 10k steps on 100k maps, LR rule, WD 0.04 → 0.4, 6 local crops, 3% die noise, head 2048/256); the old one is `jobs.train.LEGACY_RECIPE` (tested). Tracking defaults to every 1000 steps on val, off on test. | — |
 | 4.4 | **Model width / version wired by hand.** `encoder_version` and `embed_dim` are bundle variables that must match the registered model. | Derived from the UC model (alias → version, version tag → dim). |
 | 4.5 | **No teardown** target (SPECS §11.8). | One command removes the endpoint, app, Lakebase project, synced table and Delta outputs. |
 | 4.6 | **Dev-only target.** Resources carry the `dev_lucas_bruand_` prefix; no `prod` target, no service-principal `run_as`. | A `prod` target with an SP identity. |

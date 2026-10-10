@@ -75,11 +75,34 @@ def test_load_eval_table_test_split_only_when_asked(tmp_path):
         load_eval_table(dset, 8, seed=0, query_split="val+test")
 
 
-def test_train_recipe_defaults_are_the_previous_behaviour():
+def test_train_defaults_are_the_r1_recipe():
+    # the recipe behind wafer_encoder v2 (PLAN.md P1), no flags needed
     from wafer_embeddings.jobs.train import _args, train_recipe
 
-    r = train_recipe(_args(["--catalog", "c", "--schema", "s"]))
-    assert r == {"lr": 5e-4, "aug": {"die_noise_p": 0.005}, "weight_decay": None}
+    a = _args(["--catalog", "c", "--schema", "s"])
+    assert (a.embed_dim, a.depth, a.heads, a.attention, a.pre_norm) == (128, 6, 4, "isab", True)
+    assert (a.max_tokens, a.batch_size, a.steps, a.max_train) == (512, 32, 10000, 100000)
+    assert (a.out_dim, a.bottleneck, a.freeze_last_frac, a.clip_grad) == (2048, 256, 0.01, 3.0)
+    assert train_recipe(a) == {
+        "lr": 5e-4 * 32 / 256,  # LR rule
+        "aug": {
+            "die_noise_p": 0.03,
+            "crop_area": (0.4, 1.0),
+            "n_local": 6,
+            "local_crop_area": (0.05, 0.4),
+        },
+        "weight_decay": (0.04, 0.4),
+    }
+
+
+def test_legacy_recipe_flags_reproduce_the_old_behaviour():
+    from wafer_embeddings.jobs.train import LEGACY_RECIPE, _args, train_recipe
+
+    a = _args(["--catalog", "c", "--schema", "s"] + LEGACY_RECIPE.split())
+    r = train_recipe(a)
+    assert r["lr"] == 5e-4 and r["weight_decay"] == (0.0, 0.0)  # constant 0 = no decay
+    assert r["aug"] == {"die_noise_p": 0.005, "crop_area": (0.81, 0.81)}  # fixed 0.9 side
+    assert (a.embed_dim, a.depth, a.attention, a.pre_norm) == (384, 12, "full", False)
 
 
 def test_train_recipe_reference_dino_flags():
@@ -113,7 +136,8 @@ def test_track_every_is_validated():
         _args(base + ["--track-every", "-3"])
     with pytest.raises(SystemExit):  # no training curve on the test split
         _args(base + ["--track-every", "100", "--eval-split", "test"])
-    assert _args(base + ["--eval-split", "test"]).track_every == 0  # final report is fine
+    assert _args(base + ["--eval-split", "test"]).track_every == 0  # default: off on test
+    assert _args(base).track_every == 1000  # default: on for val development
 
 
 def test_eval_metric_keys_namespace_by_split_and_model():

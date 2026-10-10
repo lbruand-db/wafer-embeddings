@@ -4,10 +4,7 @@
 # Validate first: databricks air run --file ai_runtime/train.yaml --dry-run --profile mmf
 # Smoke test:     ... --override env_variables.STEPS=50 \
 #                     --override env_variables.MAX_TRAIN=2000 \
-#                     --override env_variables.EVAL_CAP=1500 \
-#                     --override env_variables.BATCH_SIZE=8 \
-#                     --override env_variables.DEPTH=4 \
-#                     --override env_variables.MAX_TOKENS=1024
+#                     --override env_variables.TRACK_EVERY=0
 #
 # Local code is shipped the documented way: code_source.snapshot uploads ./src and
 # exposes it to the command via $CODE_SOURCE_PATH (no wheel/volume install).
@@ -46,24 +43,25 @@ code_source:
 # defaults in jobs/train.py (full Gate-G1 run). Keep the two in sync when changing them.
 env_variables:
   PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True # reduce CUDA fragmentation
-  MAX_TRAIN: "50000"
-  EVAL_CAP: "5000" # per side: EVAL_SPLIT queries + train kNN bank (seeded, class-stratified)
-  STEPS: "2000"
-  BATCH_SIZE: "64"
-  DEPTH: "12"
-  MAX_TOKENS: "4096"
-  LR: "5e-4"
+  MAX_TRAIN: "100000"
+  EVAL_CAP: "1000" # per side: EVAL_SPLIT queries + train kNN bank (seeded, class-stratified)
+  STEPS: "10000"
+  BATCH_SIZE: "32"
+  DEPTH: "6"
+  MAX_TOKENS: "512"
+  LR: "0" # 0 = DINO rule 5e-4 * batch / 256
   WARMUP_FRAC: "0.1"
-  FREEZE_LAST_FRAC: "0.1" # DINO prototype-layer freeze (stabilizer)
-  CLIP_GRAD: "0" # global grad-norm clip, 0 = off
+  FREEZE_LAST_FRAC: "0.01" # DINO prototype-layer freeze (stabilizer)
+  CLIP_GRAD: "3" # global grad-norm clip, 0 = off
   SELECT_EVERY: "0" # keep-best off: no labels in training (it would use train-split labels)
   EVAL_SPLIT: "val" # development protocol; "test" only for the final report
-  TRACK_EVERY: "0" # log student+teacher eval metrics every N steps (log-only)
+  TRACK_EVERY: "1000" # log student+teacher eval metrics every N steps (log-only); set 0 with EVAL_SPLIT=test
   RUN_NAME: "dino" # MLflow run name (the job opens its own run)
-  EMBED_DIM: "384"
-  HEADS: "6"
-  # Any other jobs/train.py flags (recipe knobs: --n-local, --global-crop-area LO HI,
-  # --weight-decay-end, --pre-norm, --bottleneck, --die-noise, ...). Word-split on purpose
+  EMBED_DIM: "128"
+  HEADS: "4"
+  # Defaults = the R1 recipe behind wafer_encoder v2 (multi-crop, pre-LN, WD schedule,
+  # head 2048/256, 3% die noise: see jobs/train.py). The superseded recipe is
+  # jobs.train.LEGACY_RECIPE. Any other jobs/train.py flags go here. Word-split on purpose
   # (globbing is disabled in the command). Appended last, so a flag repeated here wins
   # over the named variables above (argparse keeps the last value) - don't repeat them.
   EXTRA_ARGS: ""

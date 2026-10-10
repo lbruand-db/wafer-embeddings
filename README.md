@@ -129,6 +129,7 @@ src/wafer_embeddings/
   serving/                # WaferEncoder (checkpoint -> embeddings), MLflow pyfunc, map codec
   jobs/                   # bootstrap, ingest, train, register, embed, lakebase
 app/                      # Databricks App: Vue 3 frontend (frontend/) + FastAPI (server.py)
+tools/                    # hand-run diagnostics behind PLAN.md's findings (tools/README.md)
 tests/                    # unit tests: CPU-only, no Databricks
 SPEC/                     # SPECS.md (design) + PLAN.md (risk-first plan, status)
 ```

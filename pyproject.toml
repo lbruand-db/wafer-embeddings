@@ -61,7 +61,7 @@ target-version = ["py311", "py312"]
 
 [tool.ty.environment]
 python-version = "3.11"
-extra-paths = ["app"] # the Databricks App's modules (server, wafer_search), imported by tests
+extra-paths = ["app", "tools"] # the App's modules (server, wafer_search) and tools/, imported by tests
 
 [tool.ty.src]
 # app/node_modules: the Vue build's npm deps (not Python).

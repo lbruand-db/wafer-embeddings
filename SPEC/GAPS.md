@@ -71,7 +71,7 @@ measured.
 
 | # | Gap | Done when |
 |---|---|---|
-| 6.1 | **Diagnostics live only in `scratch/`** (gitignored): `baseline_check.py`, `nuisance_probe.py`, `ref_recipe.py`, `score_test.py`, `app_smoke.py`. The CPU findings in PLAN.md can't be reproduced from the repo. | Moved under e.g. `tools/`, documented. |
+| 6.1 | ~~**Diagnostics live only in `scratch/`.**~~ ✅ **Done (2026-10-10):** `tools/` (`baseline_check`, `nuisance_probe`, `ref_recipe`, `score_test`, `app_smoke`), documented in [`tools/README.md`](../tools/README.md). Refreshed on the way (`nuisance_probe` imported a removed module; `baseline_check` now uses the library polar baseline; `ref_recipe` builds recipes with `jobs/train.py`'s own parser, so R1 *is* the job default). Pure helpers unit-tested (`tests/test_tools.py`); each script smoke-run on CPU. The other `scratch/` scripts were superseded one-offs and stay out. | — |
 | 6.2 | **Proxy-driven pins** to revisit: Vite 7.3.5 + an npm `overrides` for rollup 4.59.1 (`app/package.json`), `boto3>=1.34,<1.43` (`pyproject.toml`). The internal package proxies block the newest releases. | Relaxed once the proxies allow them. |
 | 6.3 | **`uv.lock` not committed** (it resolves through the internal PyPI proxy). | A portable lock generated off-proxy, or accepted as-is. |
 | 6.4 | **CI runner image**: `ubuntu-latest` moves to Ubuntu 26 from 2026-10-19 (GitHub notice). | Next CI run after that date green. |

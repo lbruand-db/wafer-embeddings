@@ -21,10 +21,11 @@ variables:
   # WM-811K archive URL (zip containing LSWMD.pkl). Downloaded Databricks-side.
   dataset_url:
     default: "http://mirlab.org/dataSet/public/MIR-WM811K.zip"
-  # Registered wafer_encoder version served by the wafer-encoder endpoint (serving
-  # needs a concrete version, not an alias). v2 = R1-long-small, provisional G1.
-  encoder_version:
-    default: "2"
+  # Model Serving endpoint name. The endpoint is managed by jobs/serve.py (it serves
+  # whatever version wafer_encoder@champion points to), not declared as a bundle resource:
+  # Model Serving needs a concrete version, which a bundle would have to hard-code.
+  serving_endpoint:
+    default: "wafer-encoder"
   # Rows to ingest (0 = all ~811K). Set small for a cheap first validation run.
   ingest_limit:
     default: "0"

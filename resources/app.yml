@@ -7,7 +7,7 @@ resources:
       resources:
         - name: serving-endpoint
           serving_endpoint:
-            name: ${resources.model_serving_endpoints.wafer_encoder.name}
+            name: ${var.serving_endpoint}
             permission: CAN_QUERY
         - name: postgres
           postgres:

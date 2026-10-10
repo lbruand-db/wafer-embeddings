@@ -75,7 +75,7 @@ flowchart LR
 | Ingest (stream, dedup, **lot-grouped** splits) | `jobs/ingest.py`, bundle job `ingest` | ✅ 696,599 maps, 45,345 lots |
 | DINO pretraining (reference-faithful recipe) | `train/`, `ai_runtime/train.yaml` | ✅ on `GPU_1xA10` |
 | UC model (MLflow pyfunc) | `serving/`, `jobs/register.py` | ✅ `wafer_encoder` v2 `@champion` |
-| Real-time serving | `resources/serving.yml` | ✅ CPU Small, scale-to-zero |
+| Real-time serving | `jobs/serve.py` (serves `@champion`) | ✅ CPU Small, scale-to-zero |
 | Batch embeddings | `ai_runtime/embed.yaml` + bundle job `embed` | ✅ 696,599 maps in 7.5 min (A10) |
 | Lakebase Search (project, Search, DB, extension, synced table, index, grants) | `jobs/lakebase.py`, bundle job `bootstrap` | ✅ fully automatic + idempotent |
 | Search app | `app/` (Vue 3 + FastAPI), `resources/app.yml` | ✅ top-k in ~40–120 ms |

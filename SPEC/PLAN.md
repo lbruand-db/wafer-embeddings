@@ -162,8 +162,8 @@ The user gated R1-long-small provisionally (test, once: cross-device 0.389 / 0.3
 polar 0.442 / 0.359; beats polar on map@10 0.346 vs 0.315) to prove the full stack:
 - ✅ **UC model** `mmf_mlops_demo_catalog.wafer_embeddings.wafer_encoder` v2 `@champion`
   (`jobs/register.py`: pyfunc over the CI-tested `serving.WaferEncoder`, 128-d).
-- ✅ **Model Serving** `wafer-encoder` (bundle `resources/serving.yml`; CPU Small,
-  scale-to-zero); output matches the local encoder to 1e-7.
+- ✅ **Model Serving** `wafer-encoder` (`jobs/serve.py`: serves whatever version
+  `@champion` points to; CPU Small, scale-to-zero); output matches the local encoder to 1e-7.
 - ✅ **Batch embeddings**: `ai_runtime/embed.yaml` (GPU, 696,599 maps in 7.5 min) → volume
   parquet → bundle job `embed` → Delta `wafer_map_embeddings` (CDF on). (In-Spark
   embedding OOMs on serverless Python workers importing CUDA torch.)
@@ -217,7 +217,8 @@ polar 0.442 / 0.359; beats polar on map@10 0.346 vs 0.315) to prove the full sta
   sync), the serving endpoint and the app; AI Runtime workloads for train / embed.
   **Remaining:** registration as a job, a one-shot orchestration of train → register →
   embed, a **teardown** target, and dim / version wiring derived from the model instead
-  of the `embed_dim` / `encoder_version` bundle variables.
+  of hand-set bundle variables (✅ done 2026-10-10: width detected from the embeddings,
+  served version resolved from `@champion` by `jobs/serve.py`).
 - Final §8 eval at the agreed gates; qualitative galleries / UMAP (§8.8); size + (deferred)
   binning hooks.
 - **Deliverable** = the M1–M5 milestones (§12) as reproducible code.
@@ -232,7 +233,7 @@ P0 ─ P1 (G1) ─ P2 ─ P3 ─ [P4 Lakebase, when needed] ─ P5
 - Single early critical path: **P0 → P1 (G1)**. Nothing else matters until the model learns.
 - **Deviation (2026-10-09, user decision):** P3 + P4 were built early on a provisionally
   gated model to prove the platform path end to end. They don't depend on which encoder
-  wins: a better model is a new UC version → `encoder_version` bump → re-embed → re-sync.
+  wins: a better model is a new UC version → move `@champion` → serve → re-embed → re-sync.
   The modelling critical path (beat polar → real G1) is unchanged.
 
 ---

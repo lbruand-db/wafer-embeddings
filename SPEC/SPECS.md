@@ -73,6 +73,12 @@ pickled pandas DataFrame (`waferMap`, `failureType`, `dieSize`, `lotName`,
 
 ### Non-functional
 - N1. Embedding dim fixed at **384** (balanced size vs. quality for Lakebase).
+  **Interim deviation (2026-10-09):** the model served today, `wafer_encoder` v2
+  (provisional G1), is a **128-d** small encoder (width 128, depth 6, 2.4M parameters).
+  The full-size 384-d model brought no gain at the same budget (PLAN.md), so 128-d stays
+  until the next real G1 model; the Lakebase column is `vector(128)`. The serving,
+  Lakebase and app code is width-agnostic: the dimension D follows the registered model
+  (bundle variable `embed_dim`), and moving to 384 is a re-register → re-embed → re-sync.
 - N2. Similarity query **p99 < 50 ms** at the serving corpus scale.
 - N3. Corpus ~700K vectors (696,599 unique maps ingested after dedup); index design valid
   to **1–10M** vectors.
@@ -264,9 +270,10 @@ wafer map (native H×W, 3-valued)
 3. **Train (mandatory)** — DINO self-distillation of the per-die ViT on **AI Runtime
    serverless GPU**; ISAB attention + gradient checkpointing + token cap to handle long
    sequences. Log loss / collapse / G1 metrics to MLflow; ablate model size.
-4. **Register** — best encoder → UC Model Registry `mmf_mlops_demo_catalog.wafer_embeddings.encoder`.
-5. **Batch embed** — job computes 384-d vectors for the corpus → Delta
-   `mmf_mlops_demo_catalog.wafer_embeddings.embeddings`.
+4. **Register** — best encoder → UC Model Registry
+   `mmf_mlops_demo_catalog.wafer_embeddings.wafer_encoder` (alias `@champion`).
+5. **Batch embed** — computes D-dim vectors (D = 384 target, **128** for the interim
+   model, N1) for the corpus → Delta `mmf_mlops_demo_catalog.wafer_embeddings.wafer_map_embeddings`.
 6. **Sync to Lakebase** — see §9.
 
 ---
@@ -415,20 +422,24 @@ re-posting returns `done`) → database → extension → UC synced table (Delta
 index scan. Proven on the live project and on a fresh throwaway project from nothing.
 Top-k query latency through the app's SQL: ~40–120 ms at 696,599 rows (vs ~450 ms exact).
 
-- Lakebase instance: `wafer-embeddings`; database `wafer_embeddings`.
-- Table `wafer_embeddings(id bigint pk, labels …, embedding vector(384))`, populated by
-  syncing the Delta embeddings table (UC synced table → Postgres `vector` column).
-- Index:
+- Lakebase project `wafer-embeddings` (Postgres 17, branch `production`); database
+  `wafer_embeddings`.
+- Table `wafer_embeddings.wafer_map_embeddings_pg(id bigint pk, embedding vector(D),
+  map_code, label, label_id, split, lot, height, width, n_dies, fail_frac, model_version)`,
+  populated by the UC synced table from Delta `wafer_map_embeddings`. **D = 384** per N1;
+  **D = 128 today** (interim model) — `vector(128)`, 696,599 rows.
+- Index (cosine `lakebase_ann`; on the partitioned synced table it appears per partition):
   ```sql
   CREATE EXTENSION IF NOT EXISTS lakebase_vector CASCADE;
-  CREATE INDEX wafer_embeddings_ann
-    ON wafer_embeddings USING lakebase_ann (embedding vector_cosine_ops);
+  CREATE INDEX IF NOT EXISTS wafer_map_embeddings_ann
+    ON wafer_embeddings.wafer_map_embeddings_pg
+    USING lakebase_ann (embedding vector_cosine_ops) WITH (build_mode = 'standard');
   ```
-- Query (bind `$1` = 384-d query embedding):
+- Query (bind `$1` = the D-dim query embedding):
   ```sql
-  SELECT id, labels, 1 - (embedding <=> $1::vector(384)) AS cosine_similarity
-  FROM wafer_embeddings
-  ORDER BY embedding <=> $1::vector(384)
+  SELECT id, label, 1 - (embedding <=> $1::vector) AS cosine_similarity
+  FROM wafer_embeddings.wafer_map_embeddings_pg
+  ORDER BY embedding <=> $1::vector
   LIMIT :k;
   ```
 
@@ -438,8 +449,10 @@ Top-k query latency through the app's SQL: ~40–120 ms at 696,599 rows (vs ~450
 
 - **Batch** — scheduled job (§7.5) backfills/refreshes the corpus and re-syncs Lakebase.
 - **Real-time** — Model Serving endpoint `wafer-encoder` wraps tokenize + encoder; input
-  a native wafer grid, output a 384-d vector. New/online wafers are embedded then upserted
-  into the Lakebase table (and picked up by the ANN index).
+  a native wafer grid, output a D-dim L2-normalized vector (384 per N1; **128** from the
+  interim `wafer_encoder` v2, CPU Small, scale-to-zero). New/online wafers are embedded
+  then upserted into the Lakebase table (and picked up by the ANN index); today the search
+  app uses the endpoint to re-embed a query live.
 
 ---
 
@@ -506,9 +519,10 @@ CI and clean installs run `uv sync` against public PyPI, with runtime deps pinne
   (`model/`), so no `timm`/`lightly` dependency — see §4 and the HF-equivalent note.
 
 ### 11.4 MLflow + Unity Catalog registry
-- `mlflow.set_registry_uri("databricks-uc")`; 3-part name `mmf_mlops_demo_catalog.wafer_embeddings.encoder`.
+- `mlflow.set_registry_uri("databricks-uc")`; 3-part name
+  `mmf_mlops_demo_catalog.wafer_embeddings.wafer_encoder` (v2 `@champion` = interim 128-d).
 - Package as **custom `mlflow.pyfunc.PythonModel`**: `load_context` loads the torch encoder;
-  `predict` runs the §5 tokenizer + encoder → 384-d L2-normalized vector; provide
+  `predict` runs the §5 tokenizer + encoder → D-dim L2-normalized vector (N1); provide
   `infer_signature`. MLflow 3 uses `log_model(name=...)`. UC perms: `USE CATALOG`,
   `USE SCHEMA`, `CREATE MODEL`.
 
@@ -706,6 +720,7 @@ baseline before Lakebase Search.
 - **Single-label eval semantics (WM-811K):** relevance = same class (§8.1); the Jaccard /
   exact-set multi-label semantics apply only to the MixedWM38 reference path.
 - **Lakebase `lakebase_ann` dimension limits** at 384-d: confirm against current docs.
+  (Works at 128-d today: 696,599 vectors, index built, top-k ~40–120 ms.)
 - **Canonical bin taxonomy (owned by domain experts):** cross-product/cross-fab retrieval
   needs a shared bin ontology (pass/fail + failure-category) so per-scheme embeddings are
   comparable across datasets. Until it exists, cross-dataset retrieval is only meaningful
@@ -764,8 +779,12 @@ non-modeling/domain.
 11. **[PLAT] Lakebase Search supports 384-d cosine.** Check: create instance,
     `lakebase_vector` extension, `lakebase_ann` index on `vector(384)` (§9) — confirm no
     dimension-limit issue. Pass: index builds, cosine query returns.
+    ✅ **Verified at 128-d (2026-10-09)** with the interim model: extension + cosine
+    `lakebase_ann` index on `vector(128)`, top-k served via the index. Re-check at 384-d.
 12. **[PLAT] UC synced-table → Postgres `vector(384)` mapping** works end-to-end. Pass:
     Delta embeddings sync into the Lakebase table + index.
+    ✅ **Verified at 128-d**: `array<float>` → `vector(128)` via a synced-table type override
+    (`PG_SPECIFIC_TYPE_VECTOR`, size = D); 696,599 rows. Re-check at 384-d.
 13. **[PLAT] ANN recall vs. exact.** Check: recall@10 vs. FAISS exact (§8.6). Pass: ≥ 0.95.
 14. **[PLAT] Query latency.** Check: p50/p99 at ~700K and synthetic 1M (N2/N3). Pass: p99 < 50 ms.
 
@@ -798,6 +817,8 @@ non-modeling/domain.
     budget. Pass: CPU acceptable (else GPU tier).
 20. **[PLAT] Custom pyfunc loads + predicts** (tokenizer + torch encoder, `code_paths` / deps)
     on the endpoint. Pass: endpoint returns a 384-d normalized vector.
+    ✅ **Verified with the interim 128-d model**: the CPU endpoint returns a 128-d
+    L2-normalized vector matching the local encoder to 1e-7.
 
 ### F. Data & forward-design items
 21. **[W8] WM-811K ingest / parse** — stream `LSWMD.pkl` (`waferMap` variable-size {0,1,2},

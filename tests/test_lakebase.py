@@ -105,7 +105,7 @@ def test_drop_table_and_preload_detection():
 
 
 def test_synced_table_spec_types_embedding_as_vector_dim():
-    cfg = LakebaseConfig(dim=64)
+    cfg = LakebaseConfig(dim=64)  # width is normally detected; explicit here
     s = synced_table_spec(cfg)["spec"]
     assert s["source_table_full_name"] == cfg.source_table
     assert s["primary_key_columns"] == ["id"] and s["scheduling_policy"] == "SNAPSHOT"
@@ -184,3 +184,20 @@ def test_suspend_updates_only_what_differs():
         "status": {"default_endpoint_settings": {"suspend_timeout_duration": "3600s"}},
     }
     assert suspend_updates(done, eps[1:], 3600) == []  # idempotent: nothing to change
+
+
+def test_width_detection_helpers():
+    from wafer_embeddings.jobs.lakebase import check_dim, dim_sql, pg_dim_sql
+
+    assert dim_sql("c.s.t") == (
+        "SELECT min(size(embedding)) AS lo, max(size(embedding)) AS hi FROM c.s.t"
+    )
+    assert pg_dim_sql("s.t") == "SELECT vector_dims(embedding) FROM s.t LIMIT 1"
+    assert check_dim(128, 128) == 128
+    with pytest.raises(ValueError):
+        check_dim(128, 384)  # mixed widths: two models in one table
+    with pytest.raises(ValueError):
+        check_dim(None, None)  # empty table
+    with pytest.raises(ValueError):
+        dim_sql("c.s.t; DROP TABLE x")
+    assert LakebaseConfig().dim == 0  # default: detect, no hand-set width

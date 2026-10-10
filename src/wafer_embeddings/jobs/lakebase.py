@@ -26,7 +26,7 @@ from __future__ import annotations
 import argparse
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 _IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$")
 _ROLE = re.compile(r"^[A-Za-z0-9@._+-]+$")
@@ -35,6 +35,14 @@ _ROLE = re.compile(r"^[A-Za-z0-9@._+-]+$")
 def _check_ident(name: str) -> str:
     if not _IDENT.match(name):
         raise ValueError(f"unsafe SQL identifier: {name!r}")
+    return name
+
+
+def _check_ident_3(name: str) -> str:
+    """A UC ``catalog.schema.table`` name."""
+    parts = name.split(".")
+    if len(parts) != 3 or not all(_IDENT.match(x) for x in parts):
+        raise ValueError(f"unsafe UC table name: {name!r}")
     return name
 
 
@@ -54,7 +62,7 @@ class LakebaseConfig:
     pg_version: int = 17
     source_table: str = "mmf_mlops_demo_catalog.wafer_embeddings.wafer_map_embeddings"
     synced_table: str = "mmf_mlops_demo_catalog.wafer_embeddings.wafer_map_embeddings_pg"
-    dim: int = 128
+    dim: int = 0  # embedding width D; 0 = detect from the source Delta table
     index: str = "wafer_map_embeddings_ann"
     build_mode: str = "standard"
     app_name: str = "wafer-search"
@@ -212,6 +220,28 @@ def verify_sql(table: str, index: str) -> list[str]:
     ]
 
 
+def dim_sql(table: str) -> str:
+    """Embedding widths present in a Delta table (Spark SQL)."""
+    return (
+        f"SELECT min(size(embedding)) AS lo, max(size(embedding)) AS hi "
+        f"FROM {_check_ident_3(table)}"
+    )
+
+
+def check_dim(lo, hi) -> int:
+    """The single embedding width D of a table, or an error if absent / mixed."""
+    if lo is None or hi is None or int(lo) <= 0:
+        raise ValueError("no embeddings to infer the vector width from")
+    if int(lo) != int(hi):
+        raise ValueError(f"mixed embedding widths {lo}..{hi}: re-embed with one model")
+    return int(lo)
+
+
+def pg_dim_sql(table: str) -> str:
+    """Width of the synced Postgres ``vector`` column (one row is enough)."""
+    return f"SELECT vector_dims(embedding) FROM {_check_ident(table)} LIMIT 1"
+
+
 def plan_uses_index(plan_lines: list[str], index: str) -> bool:
     """True if the top-k query is an ANN index scan ordered by ``embedding <=>``.
 
@@ -265,6 +295,15 @@ class _Rest:  # pragma: no cover - needs a workspace
         if op.get("error"):
             raise RuntimeError(f"{what} failed: {op['error']}")
         return op
+
+
+def _spark():  # pragma: no cover - Databricks runtime only
+    try:
+        from databricks.sdk.runtime import spark  # type: ignore
+
+        return spark
+    except Exception as e:  # noqa: BLE001
+        raise RuntimeError("width detection needs Spark: run as a job or pass --dim") from e
 
 
 def _psql(w, cfg: LakebaseConfig):  # pragma: no cover
@@ -360,6 +399,11 @@ def bootstrap(w, cfg: LakebaseConfig, log) -> dict:  # pragma: no cover - needs 
         report["synced_table"] = "skipped: source table missing (re-run after embedding)"
         log(report["synced_table"])
         return report
+    if not cfg.dim:  # width follows the embeddings, not a hand-set variable
+        lo, hi = _spark().sql(dim_sql(cfg.source_table)).collect()[0]
+        cfg = replace(cfg, dim=check_dim(lo, hi))
+        log(f"embedding width D = {cfg.dim} (from {cfg.source_table})")
+    report["dim"] = cfg.dim
     st_path = f"synced_tables/{cfg.synced_table}"
     created, recreated, deadline = False, False, time.time() + cfg.sync_timeout_s
     while True:
@@ -368,6 +412,12 @@ def bootstrap(w, cfg: LakebaseConfig, log) -> dict:  # pragma: no cover - needs 
         st = rest.get_or_none(st_path)
         state = ((st or {}).get("status") or {}).get("detailed_state") if st else None
         action = synced_table_action(state, created=created)
+        if action == "ok" and not created:  # a width change (e.g. 128 -> 384) needs a rebuild
+            with _psql(w, cfg) as conn:
+                pg_dim = (conn.execute(pg_dim_sql(cfg.pg_table)).fetchone() or [None])[0]
+            if pg_dim is not None and int(pg_dim) != cfg.dim:
+                log(f"synced table is vector({pg_dim}) but embeddings are {cfg.dim}-d: rebuild")
+                action = "recreate"
         log(f"synced table {cfg.synced_table}: state={state} -> {action}")
         if action == "ok":
             break
@@ -426,6 +476,9 @@ def bootstrap(w, cfg: LakebaseConfig, log) -> dict:  # pragma: no cover - needs 
         count, info, plan = _run(conn, verify_sql(cfg.pg_table, cfg.index), log)
         lines = [r[0] for r in plan]
         report["rows"] = count[0][0]
+        pg_dim = conn.execute(pg_dim_sql(cfg.pg_table)).fetchone()[0]
+        if int(pg_dim) != cfg.dim:
+            raise RuntimeError(f"synced vector({pg_dim}) != embedding width {cfg.dim}")
         report["index_info"] = info[0][0] if info else None
         report["plan_uses_index"] = plan_uses_index(lines, cfg.index)
         if not report["plan_uses_index"]:
@@ -444,7 +497,9 @@ def _args(argv=None):
     p.add_argument("--pg-database", default=d.pg_database)
     p.add_argument("--source-table", default=d.source_table)
     p.add_argument("--synced-table", default=d.synced_table)
-    p.add_argument("--dim", type=int, default=d.dim)
+    p.add_argument(
+        "--dim", type=int, default=d.dim, help="Embedding width (0 = detect from the source)."
+    )
     p.add_argument("--index", default=d.index)
     p.add_argument("--build-mode", default=d.build_mode, choices=["standard", "quality"])
     p.add_argument("--app-name", default=d.app_name)

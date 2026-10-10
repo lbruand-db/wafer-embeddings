@@ -25,9 +25,6 @@ variables:
   # needs a concrete version, not an alias). v2 = R1-long-small, provisional G1.
   encoder_version:
     default: "2"
-  # Embedding width of that encoder (Postgres vector(dim) in the Lakebase synced table).
-  embed_dim:
-    default: "128"
   # Rows to ingest (0 = all ~811K). Set small for a cheap first validation run.
   ingest_limit:
     default: "0"

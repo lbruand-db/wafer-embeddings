@@ -28,8 +28,6 @@ resources:
               - "${var.catalog}.${var.schema}.wafer_map_embeddings"
               - "--synced-table"
               - "${var.catalog}.${var.schema}.wafer_map_embeddings_pg"
-              - "--dim"
-              - "${var.embed_dim}"
               - "--refresh"
           environment_key: lakebase
       environments:

@@ -30,6 +30,7 @@ wafer-train = "wafer_embeddings.jobs.train:main"
 wafer-embed-load = "wafer_embeddings.jobs.embed:main_load"
 wafer-lakebase = "wafer_embeddings.jobs.lakebase:main"
 wafer-serve = "wafer_embeddings.jobs.serve:main"
+wafer-register = "wafer_embeddings.jobs.register:main"
 
 [dependency-groups]
 dev = [

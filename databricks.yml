@@ -26,6 +26,13 @@ variables:
   # Model Serving needs a concrete version, which a bundle would have to hard-code.
   serving_endpoint:
     default: "wafer-encoder"
+  # Workspace directory holding the MLflow experiment `wafer-embeddings`.
+  experiment_dir:
+    default: /Workspace/Users/lucas.bruand@databricks.com
+  # Training command for the pipeline job; ../ai_runtime/commands/train_smoke.sh for a
+  # cheap end-to-end check.
+  train_command:
+    default: ../ai_runtime/commands/train.sh
   # Rows to ingest (0 = all ~811K). Set small for a cheap first validation run.
   ingest_limit:
     default: "0"
@@ -35,6 +42,14 @@ artifacts:
     type: whl
     path: .
     build: uv build --wheel
+  # Code for the AI Runtime GPU tasks (ai_runtime_task unpacks it as $CODE_SOURCE_PATH).
+  code_source:
+    type: tgz
+    path: .
+    include:
+      - src
+    files:
+      - source: ./dist/code_source.tgz
 
 targets:
   dev:

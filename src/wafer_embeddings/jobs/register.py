@@ -24,6 +24,21 @@ def pip_requirements(torch_version: str, numpy_version: str) -> list[str]:
     ]
 
 
+def run_filter(run_name: str, since_ms: int = 0) -> str:
+    """MLflow search filter: finished runs with this name, started at/after ``since_ms``."""
+    if "'" in run_name:
+        raise ValueError(f"unsafe run name: {run_name!r}")
+    f = f"attributes.run_name = '{run_name}' AND attributes.status = 'FINISHED'"
+    return f + (f" AND attributes.start_time >= {int(since_ms)}" if since_ms else "")
+
+
+def pick_run_id(run_ids: list[str], run_name: str, since_ms: int = 0) -> str:
+    """The newest matching run (search is ordered newest first), or a clear error."""
+    if not run_ids:
+        raise SystemExit(f"no FINISHED run named {run_name!r} started at/after {since_ms}")
+    return run_ids[0]
+
+
 def sample_input():
     """Two tiny maps in the Delta row layout, for the signature + input example."""
     import pandas as pd
@@ -45,7 +60,13 @@ def _args(argv=None):
     src = p.add_mutually_exclusive_group(required=True)
     src.add_argument("--run-id", help="Training run whose encoder artifact to package.")
     src.add_argument("--checkpoint", help="Local checkpoint .pt instead of a run.")
-    p.add_argument("--experiment", default=None, help="MLflow experiment for the log run.")
+    src.add_argument(
+        "--latest-run-name",
+        help="Package the newest FINISHED run with this name in --experiment (the pipeline's "
+        "training run), optionally started after --since-ms.",
+    )
+    p.add_argument("--since-ms", type=int, default=0, help="Only runs started at/after this.")
+    p.add_argument("--experiment", default=None, help="MLflow experiment (search + log run).")
     p.add_argument("--alias", default="champion")
     p.add_argument("--metrics-json", default=None, help="Gate metrics to tag the version with.")
     return p.parse_args(argv)
@@ -64,6 +85,21 @@ def main(argv=None) -> None:  # pragma: no cover - needs a workspace
     mlflow.set_registry_uri("databricks-uc")
     if a.experiment:
         mlflow.set_experiment(a.experiment)
+    if a.latest_run_name:
+        if not a.experiment:
+            raise SystemExit("--latest-run-name needs --experiment")
+        exp = mlflow.get_experiment_by_name(a.experiment)
+        if exp is None:
+            raise SystemExit(f"experiment {a.experiment} not found")
+        runs = mlflow.search_runs(
+            [exp.experiment_id],
+            filter_string=run_filter(a.latest_run_name, a.since_ms),
+            order_by=["attributes.start_time DESC"],
+            max_results=1,
+            output_format="list",
+        )
+        a.run_id = pick_run_id([r.info.run_id for r in runs], a.latest_run_name, a.since_ms)
+        print(f"registering run {a.run_id} (latest finished {a.latest_run_name!r})")
     ckpt = a.checkpoint or mlflow.artifacts.download_artifacts(
         run_id=a.run_id, artifact_path="encoder/wafer_encoder.pt"
     )

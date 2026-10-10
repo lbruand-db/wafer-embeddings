@@ -1,0 +1,112 @@
+# One orchestrated flow (GAPS 4.2):
+#   pipeline: train (GPU) -> register (alias = job parameter) -> [alias == champion] -> publish
+#   publish:  serve @champion -> embed (GPU) -> load into Delta -> sync into Lakebase
+# A new model is registered as `candidate` by default and NOT served: promoting to
+# `champion` is a deliberate choice (G1 gate), e.g. run with alias=champion.
+resources:
+  jobs:
+    publish:
+      name: wafer-embeddings-publish
+      description: >-
+        Serve wafer_encoder@champion, batch-embed all maps with it on GPU, load into the
+        Delta table wafer_map_embeddings and re-sync Lakebase Search. Idempotent.
+      tasks:
+        - task_key: serve
+          python_wheel_task:
+            package_name: wafer_embeddings
+            entry_point: wafer-serve
+            parameters: ["--catalog", "${var.catalog}", "--schema", "${var.schema}",
+                         "--endpoint", "${var.serving_endpoint}"]
+          environment_key: sdk
+        - task_key: embed
+          depends_on: [{task_key: serve}]
+          max_retries: 0
+          ai_runtime_task:
+            experiment: wafer-embeddings
+            mlflow_experiment_directory: ${var.experiment_dir}
+            mlflow_run: publish-embed
+            code_source_path: ./dist/code_source.tgz # bundle-root relative (not rewritten like command_path)
+            deployments:
+              - command_path: ../ai_runtime/commands/embed.sh
+                compute: {accelerator_type: GPU_1xA10, accelerator_count: 1}
+          environment_key: gpu
+        - task_key: load
+          depends_on: [{task_key: embed}]
+          python_wheel_task:
+            package_name: wafer_embeddings
+            entry_point: wafer-embed-load
+            parameters: ["--catalog", "${var.catalog}", "--schema", "${var.schema}"]
+          environment_key: default
+        - task_key: lakebase_sync
+          depends_on: [{task_key: load}]
+          python_wheel_task:
+            package_name: wafer_embeddings
+            entry_point: wafer-lakebase
+            parameters: ["--source-table", "${var.catalog}.${var.schema}.wafer_map_embeddings",
+                         "--synced-table", "${var.catalog}.${var.schema}.wafer_map_embeddings_pg",
+                         "--refresh"]
+          environment_key: lakebase
+      environments: &envs
+        - environment_key: default
+          spec:
+            environment_version: "${var.serverless_environment_version}"
+            dependencies: [../dist/*.whl]
+        - environment_key: sdk
+          spec:
+            environment_version: "${var.serverless_environment_version}"
+            dependencies: [../dist/*.whl, databricks-sdk>=0.148.0]
+        - environment_key: lakebase
+          spec:
+            environment_version: "${var.serverless_environment_version}"
+            dependencies: [../dist/*.whl, databricks-sdk>=0.148.0, "psycopg[binary]"]
+        - environment_key: register
+          spec:
+            environment_version: "${var.serverless_environment_version}"
+            dependencies: [../dist/*.whl, torch, mlflow>=3.12, boto3, pandas, numpy]
+        - environment_key: gpu
+          spec:
+            environment_version: "6"
+            dependencies: [torch, scikit-learn, mlflow, boto3, pandas, pyarrow]
+
+    pipeline:
+      name: wafer-embeddings-pipeline
+      description: >-
+        Train the encoder on AI Runtime GPU, register it in UC under the `alias` job
+        parameter (default candidate), and publish it only when alias == champion.
+      parameters:
+        - name: alias
+          default: candidate
+      tasks:
+        - task_key: train
+          max_retries: 0
+          ai_runtime_task:
+            experiment: wafer-embeddings
+            mlflow_experiment_directory: ${var.experiment_dir}
+            mlflow_run: pipeline-train
+            code_source_path: ./dist/code_source.tgz # bundle-root relative (not rewritten like command_path)
+            deployments:
+              - command_path: ${var.train_command}
+                compute: {accelerator_type: GPU_1xA10, accelerator_count: 1}
+          environment_key: gpu
+        - task_key: register
+          depends_on: [{task_key: train}]
+          python_wheel_task:
+            package_name: wafer_embeddings
+            entry_point: wafer-register
+            parameters: ["--catalog", "${var.catalog}", "--schema", "${var.schema}",
+                         "--latest-run-name", "pipeline-train",
+                         "--since-ms", "{{job.start_time.timestamp_ms}}",
+                         "--experiment", "${var.experiment_dir}/wafer-embeddings",
+                         "--alias", "{{job.parameters.alias}}"]
+          environment_key: register
+        - task_key: is_champion
+          depends_on: [{task_key: register}]
+          condition_task:
+            op: EQUAL_TO
+            left: "{{job.parameters.alias}}"
+            right: champion
+        - task_key: publish
+          depends_on: [{task_key: is_champion, outcome: "true"}]
+          run_job_task:
+            job_id: ${resources.jobs.publish.id}
+      environments: *envs

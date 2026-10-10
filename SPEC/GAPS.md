@@ -51,8 +51,8 @@ measured.
 
 | # | Gap | Done when |
 |---|---|---|
-| 4.1 | **Registration runs locally** (`uv run … jobs.register`). | A bundle / AI Runtime task registers and sets `@champion`. |
-| 4.2 | **No orchestrated flow.** train → register → embed → load + Lakebase sync are separate commands. | One workflow, re-runnable end to end. |
+| 4.1 | ~~**Registration runs locally.**~~ ✅ **Done (2026-10-10):** the `pipeline` job's `register` task (serverless, `wafer-register`) packages the newest FINISHED `pipeline-train` run started after the job began (`--latest-run-name`, `--since-ms {{job.start_time.timestamp_ms}}`) under the `alias` job parameter. | — |
+| 4.2 | ~~**No orchestrated flow.**~~ ✅ **Done (2026-10-10):** `resources/pipeline.yml`. **`pipeline`**: train (`ai_runtime_task`, GPU) → register → `alias == champion`? → **`publish`**: serve `@champion` → embed (GPU) → load → Lakebase sync (`--refresh`). Default `alias=candidate` registers without serving (promotion is explicit). Verified: smoke pipeline (train → register v3 → publish excluded, champion untouched) and a full publish (696,599 maps, synced table refreshed). | — |
 | 4.3 | ~~**Training defaults ≠ the working recipe.**~~ ✅ **Done (2026-10-10):** `jobs/train.py` + `ai_runtime/train.yaml` default to the R1 recipe (w128 d6 ISAB pre-LN, 512 tokens, bs32 × 10k steps on 100k maps, LR rule, WD 0.04 → 0.4, 6 local crops, 3% die noise, head 2048/256); the old one is `jobs.train.LEGACY_RECIPE` (tested). Tracking defaults to every 1000 steps on val, off on test. | — |
 | 4.4 | ~~**Model width / version wired by hand.**~~ ✅ **Done (2026-10-10):** the Lakebase task detects D from the embeddings table (and rebuilds a synced table whose width changed); `jobs/serve.py` resolves `wafer_encoder@champion` and creates / updates the endpoint to serve that version (idempotent). `var.embed_dim` and `var.encoder_version` are gone; the endpoint left the bundle (Model Serving can't take an alias). | — |
 | 4.5 | **No teardown** target (SPECS §11.8). | One command removes the endpoint, app, Lakebase project, synced table and Delta outputs. |

@@ -118,8 +118,8 @@ deviations that mattered, levers that didn't) and the next modelling steps.
 
 ```
 databricks.yml            # Databricks Asset Bundle (target dev -> fevm-mmf-mlops-demo)
-resources/                # bootstrap (UC + Lakebase), ingest, embed jobs; serving endpoint; app
-ai_runtime/               # AI Runtime GPU workloads: train.yaml, embed.yaml (databricks air)
+resources/                # jobs: bootstrap (UC + Lakebase), ingest, pipeline, publish; app
+ai_runtime/               # GPU commands for the jobs (commands/*.sh) + ad-hoc `air run` YAMLs
 src/wafer_embeddings/
   data/                   # WM-811K parsing, dedup, lot-grouped splits
   tokenize/               # per-die tokenizer, defect-preserving token cap, augmentations
@@ -155,28 +155,30 @@ Everything is created from code, idempotently (SPECS §11.8 / N7); re-running an
 is safe.
 
 ```bash
-databricks bundle deploy --profile mmf          # jobs, serving endpoint, app
+databricks bundle deploy --profile mmf     # jobs (bootstrap, ingest, pipeline, publish) + app
 
-# 1. UC schema + volume, Lakebase project + Lakebase Search + database + lakebase_vector
+# 1. UC catalog/schema/volume, Lakebase project + Lakebase Search + database + lakebase_vector
 databricks bundle run bootstrap --profile mmf
 
 # 2. Ingest WM-811K -> Delta wafer_maps + parquet export (lot-grouped splits)
 databricks bundle run ingest --profile mmf
 
-# 3. DINO pretraining on serverless GPU (defaults = the R1 recipe; overrides via the YAML)
-databricks air run --file ai_runtime/train.yaml --profile mmf
+# 3. Train (AI Runtime GPU, R1 recipe) -> register in UC under `alias`.
+#    alias=candidate (default): registered, not served.  alias=champion: also publishes.
+databricks bundle run pipeline --profile mmf --params alias=champion
 
-# 4. Register the trained encoder in UC (sets @champion)
-uv run --extra jobs python -m wafer_embeddings.jobs.register \
-  --catalog mmf_mlops_demo_catalog --schema wafer_embeddings --run-id <mlflow-run-id>
+# 4. (Re)publish the current @champion without retraining:
+#    serve it -> batch-embed all maps on GPU -> load into Delta -> sync Lakebase Search
+databricks bundle run publish --profile mmf
 
-# 5. Batch-embed all maps on GPU, then load into Delta + sync into Lakebase (--refresh)
-databricks air run --file ai_runtime/embed.yaml --profile mmf
-databricks bundle run embed --profile mmf
-
-# 6. Start the search app
+# 5. Start the search app (stop it when not demoing: no scale-to-zero for Apps)
 databricks bundle run wafer_search --profile mmf
 ```
+
+Promotion is explicit: a model registered as `candidate` can be promoted later by setting
+the `champion` alias and running `publish`. For a cheap end-to-end check, deploy with
+`--var train_command=../ai_runtime/commands/train_smoke.sh` and run the pipeline with
+`--params alias=smoke`.
 
 Lakebase Search is enabled with `POST /api/2.0/postgres/projects/{project}/search-extensions`
 (the call behind the UI button). The extension is `lakebase_vector` (its `CASCADE` brings the

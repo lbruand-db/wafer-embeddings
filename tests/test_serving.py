@@ -206,3 +206,24 @@ def test_n_params_counts_every_encoder_weight():
     # inference freezes the weights; the total still counts them, trainable-only does not
     assert count_parameters(enc.model, trainable_only=True) == 0
     assert count_parameters(enc.model) == expected
+
+
+def test_register_latest_run_selection():
+    from wafer_embeddings.jobs.register import _args, pick_run_id, run_filter
+
+    assert run_filter("pipeline-train") == (
+        "attributes.run_name = 'pipeline-train' AND attributes.status = 'FINISHED'"
+    )
+    assert run_filter("pipeline-train", 1700000000000).endswith(
+        "AND attributes.start_time >= 1700000000000"
+    )
+    with pytest.raises(ValueError):
+        run_filter("x' OR '1'='1")
+    assert pick_run_id(["newest", "older"], "pipeline-train") == "newest"
+    with pytest.raises(SystemExit):
+        pick_run_id([], "pipeline-train", 5)  # training didn't finish: don't register
+    a = _args(
+        "--catalog c --schema s --latest-run-name pipeline-train --since-ms 7 "
+        "--experiment /x --alias candidate".split()
+    )
+    assert (a.latest_run_name, a.since_ms, a.alias) == ("pipeline-train", 7, "candidate")

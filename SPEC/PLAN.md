@@ -1,7 +1,7 @@
 # Build Plan — Wafer-Map Embedding Model (WM-811K)
 
 Companion to [`SPEC/SPECS.md`](./SPECS.md); open work is listed in
-[`GAPS.md`](../GAPS.md). This is the **execution plan**: how we build
+[`GAPS.md`](./GAPS.md). This is the **execution plan**: how we build
 it, sequenced **risk-first**. Each early step is a cheap *spike* that tries to **kill or
 confirm** a top assumption before we invest in polished infrastructure. Kill/confirm
 signals come from the **§16 de-risking checklist** and the **§8.9 acceptance gates** in the

@@ -1,7 +1,7 @@
 # Open gaps
 
 What is still missing, as of 2026-10-10. Everything listed here is **not done**; finished
-work lives in [`SPEC/PLAN.md`](SPEC/PLAN.md) and the design in [`SPEC/SPECS.md`](SPEC/SPECS.md).
+work lives in [`PLAN.md`](./PLAN.md) and the design in [`SPECS.md`](./SPECS.md).
 Items marked **🧭 decision** need an owner's call before work starts.
 
 Suggested order: **1 → 2 → 4.1–4.3 → 3 → the rest**.

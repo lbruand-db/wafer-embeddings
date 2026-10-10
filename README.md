@@ -188,7 +188,7 @@ Target workspace: `fevm-mmf-mlops-demo.cloud.databricks.com` · catalog
 
 ## Known gaps
 
-Open work is tracked in [`GAPS.md`](GAPS.md). The headline items: beat the polar baseline
+Open work is tracked in [`SPEC/GAPS.md`](SPEC/GAPS.md). The headline items: beat the polar baseline
 for a real Gate G1 (the served model is provisional), measure Lakebase ANN recall and p99
 latency (Gate G2), make registration a job inside one orchestrated workflow, and make the
 working training recipe the default.

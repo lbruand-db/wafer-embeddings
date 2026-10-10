@@ -111,6 +111,28 @@ def test_register_helpers():
     assert a.name == "wafer_encoder" and a.alias == "champion"
 
 
+def test_test_split_scored_once_tags():
+    import pytest
+
+    from wafer_embeddings.jobs.register import TEST_SCORED_AT, check_unscored, test_tags
+
+    scores = {
+        "split": "test",
+        "trained": {"xgroup_knn_macro_recall": 0.3885, "map@10": 0.3462, "knn_acc": 0.5},
+        "polar": {"xgroup_knn_macro_recall": 0.442},
+        "untrained": {"map@10": 0.29},  # not recorded on the version
+    }
+    assert test_tags(scores, "2026-10-09") == {
+        TEST_SCORED_AT: "2026-10-09",
+        "test_xgroup_knn_macro_recall": "0.3885",  # the names wafer_encoder v2 already uses
+        "test_map_at_10": "0.3462",
+        "test_polar_xgroup_knn_macro_recall": "0.442",
+    }
+    check_unscored("m", "3", {"gate": "G1-provisional"})  # never scored: fine
+    with pytest.raises(SystemExit, match="already scored on test"):
+        check_unscored("m", "2", {TEST_SCORED_AT: "2026-10-09"})
+
+
 def test_pyfunc_round_trip(tmp_path):
     mlflow = pytest.importorskip("mlflow")  # only with the jobs extra
     from wafer_embeddings.jobs.register import sample_input

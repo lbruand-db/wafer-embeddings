@@ -39,6 +39,31 @@ def pick_run_id(run_ids: list[str], run_name: str, since_ms: int = 0) -> str:
     return run_ids[0]
 
 
+# Test-split protocol (SPECS.md §8.7, GAPS 6.6): a version is scored on test once; this
+# tag records when, next to the scores (``test_*``) and the polar bar (``test_polar_*``).
+TEST_SCORED_AT = "test_scored_at"
+TEST_TAG_KEYS = ("xgroup_knn_macro_recall", "xgroup_precision@10", "map@10", "cluster_nmi")
+
+
+def test_tags(scores: dict, scored_at: str) -> dict[str, str]:
+    """Version tags for a one-time test score (``tools/score_test.py`` JSON output)."""
+    tags = {TEST_SCORED_AT: scored_at}
+    for model, prefix in (("trained", "test_"), ("polar", "test_polar_")):
+        for k in TEST_TAG_KEYS:
+            if k in scores.get(model, {}):
+                tags[prefix + k.replace("@", "_at_")] = str(scores[model][k])
+    return tags
+
+
+def check_unscored(fqn: str, version: str, tags: dict) -> None:
+    """Refuse to score a version on test twice: test numbers must never steer a design."""
+    if TEST_SCORED_AT in tags:
+        raise SystemExit(
+            f"{fqn} v{version} was already scored on test ({tags[TEST_SCORED_AT]}); "
+            "the protocol scores test once (SPECS.md §8.7)"
+        )
+
+
 def sample_input():
     """Two tiny maps in the Delta row layout, for the signature + input example."""
     import pandas as pd
@@ -153,10 +178,8 @@ def main(argv=None) -> None:  # pragma: no cover - needs a workspace
         "n_params": str(enc.n_params),
         "gate": "G1-provisional",
     }
-    trained = metrics.get("trained", {}) if isinstance(metrics, dict) else {}
-    for k in ("xgroup_knn_macro_recall", "xgroup_precision@10", "map@10", "cluster_nmi"):
-        if k in trained:
-            tags[f"test_{k.replace('@', '_at_')}"] = str(trained[k])
+    if isinstance(metrics, dict) and metrics.get("split") == "test":
+        tags |= test_tags(metrics, metrics.get("scored_at", "unknown"))
     for k, v in tags.items():
         client.set_model_version_tag(fqn, version, k, v)
     print(

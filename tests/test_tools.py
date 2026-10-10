@@ -74,6 +74,19 @@ def test_recipe_ablations():
         ref_recipe.recipe_args("R9")
 
 
+def test_score_test_needs_one_source():
+    a = score_test._args(["data", "--model", "c.s.m", "--version", "3"])
+    assert (a.model, a.version, a.checkpoint) == ("c.s.m", "3", None)
+    assert score_test._args(["data", "--checkpoint", "e.pt"]).checkpoint == "e.pt"
+    for bad in (
+        ["data"],
+        ["data", "--version", "3"],
+        ["data", "--checkpoint", "e", "--version", "3"],
+    ):
+        with pytest.raises(SystemExit):
+            score_test._args(bad)
+
+
 def test_score_test_headline_keeps_report_keys():
     m = {"xgroup_knn_macro_recall": 0.38851, "map@10": 0.3, "knn_recall_Loc": 0.0712, "x": 1.0}
     assert score_test.headline(m) == {

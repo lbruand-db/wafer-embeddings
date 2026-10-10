@@ -1,10 +1,11 @@
 # Open gaps
 
-What is still missing, as of 2026-10-10. Everything listed here is **not done**; finished
-work lives in [`PLAN.md`](./PLAN.md) and the design in [`SPECS.md`](./SPECS.md).
-Items marked **🧭 decision** need an owner's call before work starts.
+What is still missing, as of 2026-10-10. Rows struck through are closed: ✅ done or
+⊘ descoped (kept for the record). Finished work lives in [`PLAN.md`](./PLAN.md) and the design
+in [`SPECS.md`](./SPECS.md). Items marked **🧭 decision** need an owner's call before work
+starts.
 
-Suggested order: **1 → 2 → 4.1–4.3 → 3 → the rest**.
+Suggested order: **1 → 2 → 3 → 5**; 6.3 waits on an owner's call (commit a lock or accept as-is).
 
 ---
 

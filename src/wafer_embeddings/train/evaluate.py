@@ -87,11 +87,14 @@ def g1_metrics(
     knn_k: int = 20,
     class_names: tuple[str, ...] | None = None,
     groups: np.ndarray | None = None,
+    clustering: bool = True,
 ) -> dict[str, float]:
     """kNN-probe accuracy, clustering ARI/NMI, and retrieval mAP@k on labeled data.
 
     Also reports per-class kNN recall (``knn_recall_<class>``, SPECS.md §8 "report
     per-pattern") so rare-pattern failures aren't hidden by the averages.
+    ``clustering=False`` skips the KMeans fit (the ``cluster_*`` metrics), the costliest
+    part, for frequent in-training tracking.
 
     ``groups`` (e.g. map shape as a device proxy) adds ``xgroup_*`` metrics in which a
     query may not use same-group neighbours. Splits are per-map, so wafers from one
@@ -123,7 +126,7 @@ def g1_metrics(
         out["knn_macro_recall"] = float(np.mean(list(recalls.values())))
 
     uniq = np.unique(label_ids[te]) if te.sum() else np.array([])
-    if te.sum() > len(uniq) >= 2:
+    if clustering and te.sum() > len(uniq) >= 2:
         from sklearn.cluster import KMeans
 
         k = min(n_classes, len(uniq))

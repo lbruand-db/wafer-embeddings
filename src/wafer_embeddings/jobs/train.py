@@ -138,6 +138,13 @@ def _args(argv=None):
         "Default: 1000 on val, off on test (no training curve on the test split).",
     )
     p.add_argument(
+        "--track-clustering",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Include the KMeans cluster_* metrics in tracking evals (the final eval always "
+        "does); --no-track-clustering is the light path for large evals / frequent tracking.",
+    )
+    p.add_argument(
         "--probe-size",
         type=int,
         default=2048,
@@ -347,7 +354,18 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
             r = rankme(embed_all(dino, probe_wafers, device=device, which=which))
             mlflow.log_metrics({f"train/{which}/rankme": r}, step=step)
             log.info(f"track step {step} {which}: train rankme={r:.2f}")
-            m = _eval("", which=which)
+            if step >= a.steps:
+                continue  # the final eval below logs this point, with every metric
+            emb = embed_all(dino, eval_wafers, device=device, which=which)
+            m = g1_metrics(
+                emb,
+                eval_labels,
+                eval_splits,
+                N_CLASSES,
+                groups=eval_groups,
+                clustering=a.track_clustering,
+            )
+            m["rankme"] = rankme(emb)
             # g1_metrics omits a metric it can't compute (e.g. too few queries): skip it
             got = {k: m[k] for k in HEADLINE_KEYS if k in m}
             mlflow.log_metrics(eval_metric_keys(a.eval_split, which, got), step=step)

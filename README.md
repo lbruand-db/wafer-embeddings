@@ -154,7 +154,7 @@ Behind a package proxy that blocks releases younger than a week (the Databricks 
 PyPI / npm proxies do), resolve as of a week ago instead of pinning around it:
 
 ```bash
-export UV_EXCLUDE_NEWER=$(date -u -v-7d +%FT%TZ)   # GNU date: -d '7 days ago'
+export UV_EXCLUDE_NEWER=$(date -u -v-7d +%F)   # a date: the lock only moves daily (GNU: -d "7 days ago")
 export npm_config_before=$(date -u -v-7d +%F)
 ```
 

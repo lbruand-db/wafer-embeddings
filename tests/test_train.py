@@ -100,6 +100,16 @@ def test_g1_metrics_on_separable_embeddings():
     assert m["cluster_nmi"] > 0.9
     assert m["knn_recall_0"] == m["knn_recall_1"] == m["knn_recall_2"] == 1.0
 
+    light = g1_metrics(
+        np.array(embs, dtype=np.float64),
+        np.array(labels),
+        np.array(splits, dtype=object),
+        n_classes=3,
+        clustering=False,
+    )
+    assert not any(k.startswith("cluster_") for k in light)  # the KMeans fit is skipped
+    assert {k: v for k, v in m.items() if not k.startswith("cluster_")} == light
+
 
 def test_g1_metrics_per_class_recall_uses_names_and_exposes_failures():
     # class 2's queries sit on class 0's embedding -> its recall is 0, others perfect.

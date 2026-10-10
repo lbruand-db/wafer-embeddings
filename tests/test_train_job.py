@@ -138,6 +138,8 @@ def test_track_every_is_validated():
         _args(base + ["--track-every", "100", "--eval-split", "test"])
     assert _args(base + ["--eval-split", "test"]).track_every == 0  # default: off on test
     assert _args(base).track_every == 1000  # default: on for val development
+    assert _args(base).track_clustering is True  # full metrics unless the light path is asked
+    assert _args(base + ["--no-track-clustering"]).track_clustering is False
 
 
 def test_eval_metric_keys_namespace_by_split_and_model():

@@ -94,3 +94,24 @@ def test_score_test_headline_keeps_report_keys():
         "map@10": 0.3,
         "knn_recall_Loc": 0.071,
     }
+
+
+def test_compare_runs_band_and_metric_parsing():
+    import compare_runs
+
+    assert compare_runs.band([0.4]) == (0.4, 0.0)
+    mean, std = compare_runs.band([0.40, 0.42, 0.44])
+    assert abs(mean - 0.42) < 1e-12 and abs(std - 0.02) < 1e-12
+    with pytest.raises(ValueError):
+        compare_runs.band([])
+    flat = {
+        "val/student/xgroup_knn_macro_recall": 0.41,
+        "val/polar/map@10": 0.34,
+        "val/student/rankme": 12.0,  # not a compared metric
+        "test/student/map@10": 0.3,  # other split
+        "train/student/rankme": 9.0,
+    }
+    assert compare_runs.final_metrics(flat) == {
+        "student": {"xgroup_knn_macro_recall": 0.41},
+        "polar": {"map@10": 0.34},
+    }

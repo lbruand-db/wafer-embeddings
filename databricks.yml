@@ -57,3 +57,16 @@ targets:
     default: true
     workspace:
       host: https://fevm-mmf-mlops-demo.cloud.databricks.com
+
+  # Production: no name prefixes; files under the deployer's own (restricted) home. Deploy it AS the service
+  # principal that should own and run everything (e.g. from CI with the SP's OAuth M2M
+  # credentials): Apps cannot take a run_as different from the deploying identity, so the
+  # deployer is the run-as identity for the jobs and the app alike.
+  #   databricks bundle deploy -t prod   (authenticated as the SP)
+  # The GPU command scripts (ai_runtime/commands/*.sh) take no parameters
+  # (ai_runtime_task), so dev and prod write to the same catalog/schema.
+  prod:
+    mode: production
+    workspace:
+      host: https://fevm-mmf-mlops-demo.cloud.databricks.com
+      root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}

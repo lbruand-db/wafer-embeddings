@@ -78,3 +78,17 @@ def test_pixel_pca_embedding_separates_patterns():
     assert emb.shape == (8, 4)
     np.testing.assert_allclose(np.linalg.norm(emb, axis=1), 1.0, atol=1e-5)  # float32
     assert g1_metrics(emb, labels, splits, n_classes=2, knn_k=2)["knn_acc"] == 1.0
+
+
+def test_wafer_raster_and_image():
+    from wafer_embeddings.eval.frozen import IMAGENET_MEAN, PALETTE, wafer_image, wafer_raster
+
+    r = wafer_raster(_center(31), size=8)
+    assert r[0, 0] == 0  # outside the disk: no die
+    assert r[4, 4] == 2 and r[1, 4] == 1  # centre fails, mid-ring passes
+    img = wafer_image(_center(31), size=16, cells=8)
+    assert img.shape == (3, 16, 16) and img.dtype == np.float32
+    white = (PALETTE[0] - IMAGENET_MEAN) / np.array([0.229, 0.224, 0.225])
+    np.testing.assert_allclose(img[:, 0, 0], white, rtol=1e-5)  # nearest upsampling of cell 0
+    empty = TokenizedWafer(np.zeros((0, 3), np.float32), np.zeros((0,), np.int64))
+    assert wafer_raster(empty, size=4).sum() == 0

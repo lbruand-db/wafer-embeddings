@@ -135,6 +135,12 @@ def _args(argv=None):
         help="Random rotation / flip of every view. --no-orientation-invariant keeps the map "
         "orientation (WM-811K maps are aligned; the orientation-aware pixel baseline wins).",
     )
+    p.add_argument(
+        "--dinov2-baseline",
+        action="store_true",
+        help="Also score frozen off-the-shelf DINOv2 (ViT-S/14, torch.hub: needs internet) on "
+        "rasterized maps (SPECS.md §16 item 1).",
+    )
     p.add_argument("--die-noise", type=float, default=0.03, help="Pass<->fail flip prob.")
     p.add_argument(
         "--freeze-last-frac",
@@ -461,6 +467,15 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
         pixel_m = {k.removeprefix("pixel_pca_"): v for k, v in pixel.items()}
         mlflow.log_metrics(eval_metric_keys(split, "pixel_pca", pixel_m), step=0)
         log.info(f"pixel-PCA baseline: {pixel}")
+        if a.dinov2_baseline:
+            from wafer_embeddings.eval.frozen import dinov2_embedding
+
+            with stage(log, "eval frozen DINOv2 baseline"):
+                frozen = _eval("dinov2_", dinov2_embedding(eval_wafers, device=device))
+            frozen_m = {k.removeprefix("dinov2_"): v for k, v in frozen.items()}
+            mlflow.log_metrics(eval_metric_keys(split, "dinov2", frozen_m), step=0)
+            mlflow.log_metrics(eval_metric_keys(split, "dinov2", frozen_m), step=a.steps)
+            log.info(f"frozen DINOv2 baseline: {frozen}")
 
         with stage(log, "train DINO"):
             fit_dino(

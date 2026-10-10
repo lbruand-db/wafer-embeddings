@@ -16,7 +16,7 @@ import argparse
 import math
 
 KEYS = ("xgroup_knn_macro_recall", "xgroup_precision@10", "map@10", "cluster_nmi")
-MODELS = ("student", "teacher", "polar", "pixel_pca")
+MODELS = ("student", "teacher", "polar", "pixel_pca", "dinov2")
 SHORT = {
     "xgroup_knn_macro_recall": "x-recall",
     "xgroup_precision@10": "x-p@10",
@@ -84,7 +84,7 @@ def main(argv=None) -> None:  # pragma: no cover - needs a workspace
     print(f"{'':28s}" + "".join(f"{SHORT[k]:>{W}s}" for k in KEYS))
     got = {name: fetch(name) for name in [*a.band, *a.runs]}
     bars = next((m for m in got.values() if "polar" in m), {})
-    for model in ("polar", "pixel_pca"):
+    for model in ("polar", "pixel_pca", "dinov2"):
         if model in bars:
             print(_row(f"[{model}]", bars[model]))
     if a.band:

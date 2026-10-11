@@ -115,3 +115,17 @@ def test_compare_runs_band_and_metric_parsing():
         "student": {"xgroup_knn_macro_recall": 0.41},
         "polar": {"map@10": 0.34},
     }
+
+
+def test_probe_embedding_ridge_r2_and_knn():
+    import probe_embedding as pe
+
+    rng = np.random.default_rng(0)
+    x = rng.normal(size=(200, 5))
+    y = x @ rng.normal(size=(5, 3)) + 2.0  # exactly linear, with a bias
+    w = pe.ridge_fit(x, y, alpha=1e-8)
+    assert pe.r2(y, pe.ridge_predict(w, x)) > 0.999
+    assert abs(pe.r2(y, np.tile(y.mean(axis=0), (200, 1)))) < 1e-9  # mean predictor: R^2 = 0
+    emb = np.array([[1, 0], [0.99, 0.1], [0, 1], [0.1, 0.99]], dtype=float)
+    t = np.array([[1.0], [1.0], [5.0], [5.0]])
+    assert pe.knn_regress(emb, t, k=1).ravel().tolist() == [1.0, 1.0, 5.0, 5.0]

@@ -13,6 +13,7 @@ Databricks/MLflow/GPU wiring.
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -51,6 +52,12 @@ def _args(argv=None):
     p.add_argument("--schema", required=True)
     p.add_argument("--table", default="wafer_maps")
     p.add_argument("--volume", default="raw", help="UC volume holding wafer_maps_parquet.")
+    p.add_argument(
+        "--parquet",
+        default=None,
+        help="wafer_maps parquet path (default: the UC volume export); e.g. a local copy "
+        "for a CPU smoke run of this job.",
+    )
     p.add_argument("--experiment", default=None, help="MLflow experiment (default: AI Runtime's).")
     p.add_argument("--max-train", type=int, default=100000, help="Train maps to sample (0=all).")
     p.add_argument(
@@ -303,21 +310,121 @@ def load_eval_table(
     return dset.to_table(filter=ds.field("id").isin(want))
 
 
+@dataclass
+class EvalSet:
+    """The labeled eval sample: queries of one split + the train-side kNN bank."""
+
+    wafers: list
+    labels: np.ndarray
+    splits: np.ndarray
+    groups: np.ndarray  # map shape per wafer (the device proxy, ``data.rows.shape_groups``)
+
+    @classmethod
+    def load(cls, dset, a) -> EvalSet:
+        """Seeded, class-stratified sample (``load_eval_table``), capped at seed 0 as in
+        serving, so the eval sees the dies the served encoder sees."""
+        rows = load_eval_table(
+            dset,
+            a.eval_cap,
+            a.eval_seed,
+            balanced=a.eval_sampling == "balanced",
+            query_split=a.eval_split,
+        ).to_pylist()
+        wafers, labels, splits = wafers_from_rows(rows, max_tokens=a.max_tokens)
+        return cls(wafers, labels, splits, shape_groups(rows))
+
+    def metrics(self, emb: np.ndarray, clustering: bool = True) -> dict[str, float]:
+        """G1 metrics (+ per-class recall) of an embedding of ``wafers``."""
+        return g1_metrics(
+            emb,
+            self.labels,
+            self.splits,
+            N_CLASSES,
+            class_names=CLASS_NAMES,
+            groups=self.groups,
+            clustering=clustering,
+        )
+
+
+def build_positives(a, train_wafers, train_labels, device: str = "cpu", log=None):
+    """The ``(N, k)`` positives for ``fit_dino(neighbours=...)``, or None.
+
+    ``--nn-positives``: descriptor neighbours (label-free); ``--label-positives``: the
+    same-class ablation (uses train labels; such a run can't be registered).
+    """
+    from wafer_embeddings.eval.baselines import descriptor_embedding
+    from wafer_embeddings.train.positives import descriptor_neighbours, label_neighbours
+
+    if a.nn_positives:
+        desc = descriptor_embedding(a.nn_descriptor, train_wafers, dim=a.embed_dim)
+        return descriptor_neighbours(desc, a.nn_positives, device=device)
+    if a.label_positives:
+        if log is not None:
+            log.warning("ABLATION: same-class positives use TRAIN LABELS (not servable)")
+        return label_neighbours(train_labels, a.label_positives, np.random.default_rng(a.seed))
+    return None
+
+
+def build_training(a, device: str = "cpu"):
+    """``(dino, loss_fn, optimizer, recipe)`` for the args: the encoder via
+    ``serving.build_encoder`` (so serving rebuilds the same architecture), DINO head +
+    EMA teacher, AdamW with DINO's param groups (weights decayed, biases / norms not)."""
+    import torch
+
+    from wafer_embeddings.model.dino import DinoModel, DINOHead, DINOLoss
+    from wafer_embeddings.serving.encoder import build_encoder
+
+    encoder = build_encoder(vars(a), grad_checkpoint=a.grad_checkpoint)
+    head = DINOHead(a.embed_dim, out_dim=a.out_dim, bottleneck=a.bottleneck)
+    dino = DinoModel(encoder, head).to(device)
+    loss_fn = DINOLoss(out_dim=a.out_dim).to(device)
+    recipe = train_recipe(a)
+    opt = torch.optim.AdamW(
+        param_groups(dino.student_enc, dino.student_head),
+        lr=recipe["lr"],
+        weight_decay=a.weight_decay,
+    )
+    return dino, loss_fn, opt, recipe
+
+
+def fit_kwargs(a, recipe: dict) -> dict:
+    """The ``fit_dino`` schedule / augmentation keyword arguments for the args."""
+    return {
+        "steps": a.steps,
+        "batch_size": a.batch_size,
+        "freeze_last_frac": a.freeze_last_frac,
+        "warmup_frac": a.warmup_frac,
+        "clip_grad": a.clip_grad or None,
+        "aug": recipe["aug"],
+        "weight_decay": recipe["weight_decay"],
+        "orientation_invariant": a.orientation_invariant,
+        "track_every": a.track_every,
+    }
+
+
+def baseline_embeddings(a, wafers, device: str = "cpu") -> dict[str, np.ndarray]:
+    """Training-free bars on the eval wafers: polar, pixel-PCA (SPECS.md §16 item 24) and,
+    with ``--dinov2-baseline``, frozen DINOv2 (§16 item 1). Logged next to the curves."""
+    from wafer_embeddings.eval.baselines import pixel_pca_embedding, polar_fail_embedding
+
+    out = {
+        "polar": polar_fail_embedding(wafers),
+        "pixel_pca": pixel_pca_embedding(wafers, dim=a.embed_dim),
+    }
+    if a.dinov2_baseline:
+        from wafer_embeddings.eval.frozen import dinov2_embedding
+
+        out["dinov2"] = dinov2_embedding(wafers, device=device)
+    return out
+
+
 def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
     import mlflow  # ty: ignore[unresolved-import]
     import pyarrow.dataset as ds
     import torch
 
-    from wafer_embeddings.eval.baselines import (
-        descriptor_embedding,
-        pixel_pca_embedding,
-        polar_fail_embedding,
-    )
     from wafer_embeddings.eval.metrics import effective_rank, rankme
-    from wafer_embeddings.model.dino import DinoModel, DINOHead, DINOLoss
     from wafer_embeddings.model.encoder import count_parameters
-    from wafer_embeddings.serving.encoder import build_encoder
-    from wafer_embeddings.train.positives import descriptor_neighbours, label_neighbours
 
     a = _args(argv)
     log = get_logger("wafer_embeddings.train")
@@ -328,98 +435,58 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
 
     # AI Runtime serverless GPU has no Spark session; read the volume parquet export
     # with pyarrow (seeded samples, so we never materialize the whole corpus).
-    pq = f"/Volumes/{a.catalog}/{a.schema}/{a.volume}/wafer_maps_parquet"
+    pq = a.parquet or f"/Volumes/{a.catalog}/{a.schema}/{a.volume}/wafer_maps_parquet"
     dset = ds.dataset(pq, format="parquet")
     with stage(log, "load train split (seeded random sample)"):
         tbl = load_train_table(dset, a.max_train, a.seed)
         train_wafers, train_labels, _ = wafers_from_rows(
             tbl.to_pylist(), max_tokens=a.max_tokens, seed=a.seed
         )
-    neighbours = None
-    if a.nn_positives:
-        with stage(log, f"{a.nn_descriptor} neighbours (k={a.nn_positives}) of the train sample"):
-            desc = descriptor_embedding(a.nn_descriptor, train_wafers, dim=a.embed_dim)
-            neighbours = descriptor_neighbours(desc, a.nn_positives, device=device)
-    if a.label_positives:
-        log.warning("ABLATION: same-class positives use TRAIN LABELS (diagnostic, not servable)")
-        neighbours = label_neighbours(
-            train_labels, a.label_positives, np.random.default_rng(a.seed)
-        )
+    with stage(log, "positives (descriptor neighbours / ablation)"):
+        neighbours = build_positives(a, train_wafers, train_labels, device=device, log=log)
     if a.eval_split == "test":
         log.warning("EVAL ON TEST SPLIT: final report only - do not tune on these numbers")
     with stage(log, f"load labeled eval ({a.eval_split} queries, {a.eval_sampling} sample)"):
-        tbl = load_eval_table(
-            dset,
-            a.eval_cap,
-            a.eval_seed,
-            balanced=a.eval_sampling == "balanced",
-            query_split=a.eval_split,
-        )
-        rows = tbl.to_pylist()
-        # cap seed 0, as in serving: the eval sees the dies the served encoder sees
-        eval_wafers, eval_labels, eval_splits = wafers_from_rows(rows, max_tokens=a.max_tokens)
-        eval_groups = shape_groups(rows)
-        del rows
-    q = eval_splits == a.eval_split
-    mix = dict(zip(*(v.tolist() for v in np.unique(eval_labels[q], return_counts=True))))
-    log.info(f"train={len(train_wafers)} eval_labeled={len(eval_wafers)} query class mix={mix}")
+        ev = EvalSet.load(dset, a)
+    q = ev.splits == a.eval_split
+    mix = dict(zip(*(v.tolist() for v in np.unique(ev.labels[q], return_counts=True))))
+    log.info(f"train={len(train_wafers)} eval_labeled={len(ev.wafers)} query class mix={mix}")
 
-    encoder = build_encoder(vars(a), grad_checkpoint=a.grad_checkpoint)
-    head = DINOHead(a.embed_dim, out_dim=a.out_dim, bottleneck=a.bottleneck)
-    dino = DinoModel(encoder, head).to(device)
-    loss_fn = DINOLoss(out_dim=a.out_dim).to(device)
-    recipe = train_recipe(a)
+    dino, loss_fn, opt, recipe = build_training(a, device)
     log.info(f"recipe: {recipe}")
-    # weights decayed, biases / norms not (DINO's param grouping)
-    opt = torch.optim.AdamW(
-        param_groups(dino.student_enc, dino.student_head),
-        lr=recipe["lr"],
-        weight_decay=a.weight_decay,
-    )
-
     if a.experiment:
         mlflow.set_experiment(a.experiment)
 
-    def _eval(
-        prefix: str, emb: np.ndarray | None = None, which: str = "student"
-    ) -> dict[str, float]:
-        if emb is None:
-            emb = embed_all(dino, eval_wafers, device=device, which=which)
-        m = g1_metrics(
-            emb, eval_labels, eval_splits, N_CLASSES, class_names=CLASS_NAMES, groups=eval_groups
-        )
+    def _eval(emb: np.ndarray) -> dict[str, float]:
+        m = ev.metrics(emb)
         m["effective_rank"] = effective_rank(emb)
         m["rankme"] = rankme(emb)
-        return {f"{prefix}{k}": v for k, v in m.items()}
+        return m
+
+    def _embed(which: str = "student", wafers=None) -> np.ndarray:
+        return embed_all(dino, ev.wafers if wafers is None else wafers, device=device, which=which)
 
     # Label-free health signal: RankMe on a fixed set of train maps (the train sample is
     # already a seeded random draw, so its head is a random probe set).
     probe_wafers = train_wafers[: a.probe_size]
 
     # Checkpoint selection uses only the labeled train-side bank, never the G1 queries.
-    bank = np.nonzero(eval_splits == "train")[0]
-    bank_wafers = [eval_wafers[i] for i in bank]
+    bank = np.nonzero(ev.splits == "train")[0]
+    bank_wafers = [ev.wafers[i] for i in bank]
 
     def _select() -> float:
-        emb = embed_all(dino, bank_wafers, device=device)
-        return selection_score(emb, eval_labels[bank], N_CLASSES, groups=eval_groups[bank])
+        emb = _embed(wafers=bank_wafers)
+        return selection_score(emb, ev.labels[bank], N_CLASSES, groups=ev.groups[bank])
 
     def _track(step: int) -> None:
         for which in ("student", "teacher"):
-            r = rankme(embed_all(dino, probe_wafers, device=device, which=which))
+            r = rankme(_embed(which, probe_wafers))
             mlflow.log_metrics({f"train/{which}/rankme": r}, step=step)
             log.info(f"track step {step} {which}: train rankme={r:.2f}")
             if step >= a.steps:
                 continue  # the final eval below logs this point, with every metric
-            emb = embed_all(dino, eval_wafers, device=device, which=which)
-            m = g1_metrics(
-                emb,
-                eval_labels,
-                eval_splits,
-                N_CLASSES,
-                groups=eval_groups,
-                clustering=a.track_clustering,
-            )
+            emb = _embed(which)
+            m = ev.metrics(emb, clustering=a.track_clustering)
             m["rankme"] = rankme(emb)
             # g1_metrics omits a metric it can't compute (e.g. too few queries): skip it
             got = {k: m[k] for k in HEADLINE_KEYS if k in m}
@@ -438,8 +505,8 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
                 "device": device,
                 "n_classes": N_CLASSES,
                 # the served artifact is the encoder; the DINO head is training-only
-                "n_params": count_parameters(encoder),
-                "head_n_params": count_parameters(head),
+                "n_params": count_parameters(dino.student_enc),
+                "head_n_params": count_parameters(dino.student_head),
             }
         )
         # AI Runtime may hand the job a pre-created run; the tag renames it either way
@@ -455,32 +522,17 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
         # Same eval maps, freshly initialized encoder: the bar training must beat. It is
         # step 0 of the student/teacher curves (both start as the same weights).
         with stage(log, "embed + eval untrained encoder (baseline)"):
-            baseline = _eval("untrained_")
-        untrained = {k.removeprefix("untrained_"): v for k, v in baseline.items()}
+            untrained = _eval(_embed())
         for which in ("student", "teacher"):
             mlflow.log_metrics(eval_metric_keys(split, which, untrained), step=0)
-        log.info(f"untrained baseline: {baseline}")
-        # Training-free handcrafted defect descriptor: the bar a learned encoder must beat.
-        with stage(log, "eval polar FAIL-histogram baseline"):
-            polar = _eval("polar_", polar_fail_embedding(eval_wafers))
-        polar_m = {k.removeprefix("polar_"): v for k, v in polar.items()}
-        mlflow.log_metrics(eval_metric_keys(split, "polar", polar_m), step=0)
-        log.info(f"polar baseline: {polar}")
-        # Spec baseline (SPECS.md §16 item 24): flattened FAIL raster + PCA, no training.
-        with stage(log, "eval pixel-PCA baseline"):
-            pixel = _eval("pixel_pca_", pixel_pca_embedding(eval_wafers, dim=a.embed_dim))
-        pixel_m = {k.removeprefix("pixel_pca_"): v for k, v in pixel.items()}
-        mlflow.log_metrics(eval_metric_keys(split, "pixel_pca", pixel_m), step=0)
-        log.info(f"pixel-PCA baseline: {pixel}")
-        if a.dinov2_baseline:
-            from wafer_embeddings.eval.frozen import dinov2_embedding
-
-            with stage(log, "eval frozen DINOv2 baseline"):
-                frozen = _eval("dinov2_", dinov2_embedding(eval_wafers, device=device))
-            frozen_m = {k.removeprefix("dinov2_"): v for k, v in frozen.items()}
-            mlflow.log_metrics(eval_metric_keys(split, "dinov2", frozen_m), step=0)
-            mlflow.log_metrics(eval_metric_keys(split, "dinov2", frozen_m), step=a.steps)
-            log.info(f"frozen DINOv2 baseline: {frozen}")
+        log.info(f"untrained baseline: {untrained}")
+        # Training-free bars, logged at the first and last step (flat reference lines).
+        bars: dict[str, dict[str, float]] = {}
+        for name, emb in baseline_embeddings(a, ev.wafers, device).items():
+            with stage(log, f"eval {name} baseline"):
+                bars[name] = _eval(emb)
+            mlflow.log_metrics(eval_metric_keys(split, name, bars[name]), step=0)
+            log.info(f"{name} baseline: {bars[name]}")
 
         with stage(log, "train DINO"):
             fit_dino(
@@ -488,50 +540,40 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
                 loss_fn,
                 opt,
                 train_wafers,
-                steps=a.steps,
-                batch_size=a.batch_size,
                 rng=rng,
                 device=device,
-                freeze_last_frac=a.freeze_last_frac,
-                warmup_frac=a.warmup_frac,
-                clip_grad=a.clip_grad or None,
-                aug=recipe["aug"],
-                weight_decay=recipe["weight_decay"],
                 log=log.info,
                 log_every=50,
                 monitor=_monitor,
                 select_fn=_select if a.select_every else None,
                 select_every=a.select_every,
                 track_fn=_track if a.track_every else None,
-                track_every=a.track_every,
                 neighbours=neighbours,
-                orientation_invariant=a.orientation_invariant,
+                **fit_kwargs(a, recipe),
             )
 
         with stage(log, "embed + eval (G1)"):
-            metrics = _eval("")
+            metrics = _eval(_embed())
             # DINO reports the EMA teacher (ref [1]); log it alongside the student
-            teacher = _eval("teacher_", which="teacher")
-        teacher_m = {k.removeprefix("teacher_"): v for k, v in teacher.items()}
+            teacher = _eval(_embed("teacher"))
         mlflow.log_metrics(eval_metric_keys(split, "student", metrics), step=a.steps)
-        mlflow.log_metrics(eval_metric_keys(split, "teacher", teacher_m), step=a.steps)
-        mlflow.log_metrics(eval_metric_keys(split, "polar", polar_m), step=a.steps)
-        mlflow.log_metrics(eval_metric_keys(split, "pixel_pca", pixel_m), step=a.steps)
+        mlflow.log_metrics(eval_metric_keys(split, "teacher", teacher), step=a.steps)
+        for name, m in bars.items():
+            mlflow.log_metrics(eval_metric_keys(split, name, m), step=a.steps)
         log.info(f"G1 metrics: {metrics}")
         log.info(f"teacher metrics: {teacher}")
         for k in HEADLINE_KEYS:
+            ref = " ".join(f"{name}={m.get(k)}" for name, m in bars.items())
             log.info(
-                f"{k}: polar={polar.get('polar_' + k)} "
-                f"pixel_pca={pixel.get('pixel_pca_' + k)} "
-                f"untrained={baseline.get('untrained_' + k)} trained={metrics.get(k)} "
-                f"teacher={teacher.get('teacher_' + k)}"
+                f"{k}: {ref} untrained={untrained.get(k)} trained={metrics.get(k)} "
+                f"teacher={teacher.get(k)}"
             )
 
         path = "/tmp/wafer_encoder.pt"
-        torch.save({"state_dict": encoder.state_dict(), "config": vars(a)}, path)
+        torch.save({"state_dict": dino.student_enc.state_dict(), "config": vars(a)}, path)
         mlflow.log_artifact(path, artifact_path="encoder")
 
-        gate = beats_polar(metrics, polar_m)
+        gate = beats_polar(metrics, bars["polar"])
         mlflow.log_metric(f"{split}/beats_polar", float(gate))
         log.info(f"GATE G1 (single run; seed noise not accounted) {'PASS' if gate else 'NOT MET'}")
 

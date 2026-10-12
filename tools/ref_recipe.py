@@ -50,13 +50,14 @@ def main(argv=None) -> None:  # pragma: no cover - CPU training run
     import pyarrow.dataset as ds
     import torch
 
-    from wafer_embeddings.data.rows import shape_groups
-    from wafer_embeddings.data.wm811k import CLASS_NAMES
-    from wafer_embeddings.jobs.train import load_eval_table, load_train_table
-    from wafer_embeddings.model.dino import DinoModel, DINOHead, DINOLoss
-    from wafer_embeddings.serving.encoder import build_encoder
-    from wafer_embeddings.train import embed_all, fit_dino, g1_metrics, param_groups
-    from wafer_embeddings.train import wafers_from_rows
+    from wafer_embeddings.jobs.train import (
+        EvalSet,
+        build_positives,
+        build_training,
+        fit_kwargs,
+        load_train_table,
+    )
+    from wafer_embeddings.train import embed_all, fit_dino, wafers_from_rows
 
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("parquet")
@@ -65,37 +66,21 @@ def main(argv=None) -> None:  # pragma: no cover - CPU training run
     p.add_argument("--threads", type=int, default=3)
     c = p.parse_args(argv)
     a = recipe_args(c.recipe, c.flags)
-    r = train_recipe(a)
     torch.set_num_threads(c.threads)
     rng = np.random.default_rng(a.seed)
     torch.manual_seed(a.seed)
 
+    # the train job's own pieces (jobs/train.py), on CPU and a local parquet copy
     dset = ds.dataset(c.parquet, format="parquet")
     train_rows = load_train_table(dset, a.max_train, a.seed).to_pylist()
-    train_w, _, _ = wafers_from_rows(train_rows, max_tokens=a.max_tokens, seed=a.seed)
-    rows = load_eval_table(dset, a.eval_cap, a.seed).to_pylist()  # val queries (protocol)
-    eval_w, eval_y, eval_s = wafers_from_rows(rows, max_tokens=a.max_tokens)
-    shapes = shape_groups(rows)
-    print(f"recipe {c.recipe}: {r} train={len(train_w)} eval={len(eval_w)}", flush=True)
-    neighbours = None
-    if a.nn_positives:
-        from wafer_embeddings.eval.baselines import descriptor_embedding
-        from wafer_embeddings.train.positives import descriptor_neighbours
-
-        desc = descriptor_embedding(a.nn_descriptor, train_w, dim=a.embed_dim)
-        neighbours = descriptor_neighbours(desc, a.nn_positives)
-
-    enc = build_encoder(vars(a))
-    dino = DinoModel(enc, DINOHead(a.embed_dim, out_dim=a.out_dim, bottleneck=a.bottleneck))
-    opt = torch.optim.AdamW(
-        param_groups(dino.student_enc, dino.student_head), lr=r["lr"], weight_decay=a.weight_decay
-    )
+    train_w, train_y, _ = wafers_from_rows(train_rows, max_tokens=a.max_tokens, seed=a.seed)
+    ev = EvalSet.load(dset, a)  # val queries (protocol)
+    neighbours = build_positives(a, train_w, train_y)
+    dino, loss_fn, opt, recipe = build_training(a)
+    print(f"recipe {c.recipe}: {recipe} train={len(train_w)} eval={len(ev.wafers)}", flush=True)
 
     def score(which: str) -> dict:
-        emb = embed_all(dino, eval_w, which=which)
-        m = g1_metrics(
-            emb, eval_y, eval_s, len(CLASS_NAMES), class_names=CLASS_NAMES, groups=shapes
-        )
+        m = ev.metrics(embed_all(dino, ev.wafers, which=which))
         return {k: round(m[k], 4) for k in REPORT_KEYS}
 
     def track(step: int) -> None:
@@ -105,23 +90,15 @@ def main(argv=None) -> None:  # pragma: no cover - CPU training run
     t0 = time.time()
     fit_dino(
         dino,
-        DINOLoss(out_dim=a.out_dim),
+        loss_fn,
         opt,
         train_w,
-        steps=a.steps,
-        batch_size=a.batch_size,
         rng=rng,
-        warmup_frac=a.warmup_frac,
-        freeze_last_frac=a.freeze_last_frac,
-        clip_grad=a.clip_grad or None,
-        aug=r["aug"],
-        weight_decay=r["weight_decay"],
         log=lambda s: print(s, flush=True),
         log_every=100,
         track_fn=track,
-        track_every=a.track_every,
         neighbours=neighbours,
-        orientation_invariant=a.orientation_invariant,
+        **fit_kwargs(a, recipe),
     )
     print(f"DONE {c.recipe} secs={round(time.time() - t0)}", flush=True)
 

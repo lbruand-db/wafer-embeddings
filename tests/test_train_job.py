@@ -202,3 +202,72 @@ def test_register_refuses_label_trained_runs():
     check_servable("r0", {})  # runs from before the tag
     with pytest.raises(SystemExit, match="used training labels"):
         check_servable("r2", {"uses_train_labels": "true"})
+
+
+def _small_args(*extra):
+    from wafer_embeddings.jobs.train import _args
+
+    base = ["--catalog", "c", "--schema", "s", "--embed-dim", "16", "--depth", "1"]
+    base += ["--heads", "4", "--out-dim", "32", "--bottleneck", "8", "--no-grad-checkpoint"]
+    return _args(base + list(extra))
+
+
+def _tiny_wafers(n=8):
+    import numpy as np
+
+    from wafer_embeddings.data.common import FAIL, PASS
+    from wafer_embeddings.tokenize.tokenizer import tokenize
+
+    rng = np.random.default_rng(0)
+    out = []
+    for _ in range(n):
+        m = np.full((10, 10), PASS, dtype=np.uint8)
+        m[rng.random((10, 10)) < 0.2] = FAIL
+        out.append(tokenize(m))
+    return out
+
+
+def test_build_training_and_fit_kwargs_follow_the_args():
+    from wafer_embeddings.jobs.train import build_training, fit_kwargs, train_recipe
+
+    a = _small_args("--steps", "7", "--clip-grad", "0", "--no-orientation-invariant")
+    dino, loss_fn, opt, recipe = build_training(a)
+    assert recipe == train_recipe(a)
+    assert opt.param_groups[0]["lr"] == recipe["lr"]
+    assert dino.student_enc.attention == a.attention
+    kw = fit_kwargs(a, recipe)
+    assert (kw["steps"], kw["clip_grad"], kw["orientation_invariant"]) == (7, None, False)
+    assert kw["aug"] == recipe["aug"] and kw["track_every"] == a.track_every
+
+
+def test_build_positives_by_flag():
+    import numpy as np
+
+    from wafer_embeddings.jobs.train import build_positives
+
+    w = _tiny_wafers()
+    labels = np.array([0, 0, 1, 1, -1, -1, 2, 2])
+    assert build_positives(_small_args(), w, labels) is None
+    nn = build_positives(_small_args("--nn-positives", "2"), w, labels)
+    assert nn.shape == (8, 2) and all(i not in row for i, row in enumerate(nn))
+    lab = build_positives(_small_args("--label-positives", "2"), w, labels)
+    assert all(labels[j] == labels[0] for j in lab[0])
+
+
+def test_baseline_embeddings_and_evalset_metrics():
+    import numpy as np
+
+    from wafer_embeddings.jobs.train import EvalSet, baseline_embeddings
+
+    w = _tiny_wafers()
+    bars = baseline_embeddings(_small_args(), w)
+    assert set(bars) == {"polar", "pixel_pca"}  # dinov2 only with --dinov2-baseline
+    assert all(len(e) == len(w) for e in bars.values())
+    ev = EvalSet(
+        w,
+        np.array([0, 1, 0, 1, 0, 1, 0, 1]),
+        np.array(["train"] * 4 + ["val"] * 4, dtype=object),
+        np.array(["10x10"] * 8, dtype=object),
+    )
+    m = ev.metrics(bars["polar"], clustering=False)
+    assert "knn_macro_recall" in m and not any(k.startswith("cluster_") for k in m)

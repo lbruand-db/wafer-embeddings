@@ -1,7 +1,7 @@
 # Databricks AI Runtime serverless-GPU training workload (SPECS.md §4/§7/§11.3).
 #
-# Launched with:  databricks air run --file ai_runtime/train.yaml --profile mmf
-# Validate first: databricks air run --file ai_runtime/train.yaml --dry-run --profile mmf
+# Launched with:  ai_runtime/run.sh ai_runtime/train.yaml --profile mmf
+# Validate first: ai_runtime/run.sh ai_runtime/train.yaml --dry-run --profile mmf
 # Smoke test:     ... --override "env_variables.EXTRA_ARGS=--steps 50 --max-train 2000 --track-every 0"
 # Any recipe:     ... --override env_variables.RUN_NAME=nnpix-k5 \
 #                     --override "env_variables.EXTRA_ARGS=--nn-positives 5 --seed 1 --eval-seed 0"
@@ -11,7 +11,9 @@
 # AI Runtime is Public Preview; `databricks air` is "under active development".
 
 experiment_name: wafer-embeddings
-mlflow_experiment_directory: /Workspace/Users/lucas.bruand@databricks.com
+# Neutral default: ai_runtime/run.sh overrides it with /Workspace/Users/<you> (the YAML
+# has no variable substitution). A bare `databricks air run` lands in Shared.
+mlflow_experiment_directory: /Workspace/Shared
 mlflow_run_name: dino # the job also sets RUN_NAME below
 
 compute:

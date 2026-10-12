@@ -181,7 +181,8 @@ polar 0.442 / 0.359; beats polar on map@10 0.346 vs 0.315) to prove the full sta
 
 ### P3 — R4 + R5: Training-at-scale + model serving on the platform
 - **AI Runtime training path (§16 16):** ✅ **done** — `train` runs reproducibly via
-  `databricks air run --file ai_runtime/train.yaml` on serverless GPU; torch/CUDA confirmed on
+  `ai_runtime/run.sh ai_runtime/train.yaml` (`databricks air run` + the experiment in
+  your home) on serverless GPU; torch/CUDA confirmed on
   the env, code shipped via `code_source.snapshot`.
 - **UC registration:** ✅ `jobs/register.py` (pyfunc over `serving.WaferEncoder`, CPU torch
   wheels, signature + input example, `@champion` alias, gate metrics as version tags).

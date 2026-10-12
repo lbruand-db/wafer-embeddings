@@ -119,7 +119,7 @@ deviations that mattered, levers that didn't) and the next modelling steps.
 ```
 databricks.yml            # Databricks Asset Bundle (target dev -> fevm-mmf-mlops-demo)
 resources/                # jobs: bootstrap (UC + Lakebase), ingest, pipeline, publish; app
-ai_runtime/               # GPU commands for the jobs (commands/*.sh) + ad-hoc `air run` YAMLs
+ai_runtime/               # GPU commands for the jobs (commands/*.sh) + ad-hoc YAMLs (submit: run.sh)
 src/wafer_embeddings/
   data/                   # WM-811K parsing, dedup, lot-grouped splits
   tokenize/               # per-die tokenizer, defect-preserving token cap, augmentations

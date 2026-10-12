@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 import torch
 
-from wafer_embeddings.data.mixedwm38 import FAIL, NO_DIE, PASS
+from wafer_embeddings.data.common import FAIL, NO_DIE, PASS
 from wafer_embeddings.serving import WaferEncoder, build_encoder, decode_map, encode_map
 
 CONFIG = {

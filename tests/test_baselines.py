@@ -8,7 +8,7 @@ from wafer_embeddings.eval.baselines import (
 )
 from wafer_embeddings.tokenize.augment import rotate_coords
 from wafer_embeddings.tokenize.tokenizer import TokenizedWafer, tokenize
-from wafer_embeddings.data.mixedwm38 import FAIL, NO_DIE, PASS
+from wafer_embeddings.data.common import FAIL, NO_DIE, PASS
 from wafer_embeddings.train import g1_metrics
 
 

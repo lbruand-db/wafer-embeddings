@@ -1,6 +1,6 @@
 import numpy as np
 
-from wafer_embeddings.data.mixedwm38 import FAIL, NO_DIE, PASS
+from wafer_embeddings.data.common import FAIL, NO_DIE, PASS
 from wafer_embeddings.tokenize import tokenizer as tk
 from wafer_embeddings.tokenize import augment as aug
 

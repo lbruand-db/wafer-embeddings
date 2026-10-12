@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 
-from wafer_embeddings.data.mixedwm38 import FAIL, NO_DIE, PASS
+from wafer_embeddings.data.common import FAIL, NO_DIE, PASS
 from wafer_embeddings.model.dino import DinoModel, DINOHead
 from wafer_embeddings.model.encoder import PerDieViT
 from wafer_embeddings.tokenize import tokenizer as tk

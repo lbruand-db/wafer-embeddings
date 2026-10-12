@@ -13,7 +13,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from wafer_embeddings.data.mixedwm38 import FAIL, NO_DIE
+from wafer_embeddings.data.common import FAIL, NO_DIE
 
 # Token state ids (no-die is dropped, never a token). Multi-scheme binning (SPECS.md
 # §5) generalizes this to several categorical fields; pass/fail is the base case.

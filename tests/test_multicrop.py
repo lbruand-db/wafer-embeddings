@@ -4,7 +4,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from wafer_embeddings.data.mixedwm38 import NO_DIE, PASS
+from wafer_embeddings.data.common import NO_DIE, PASS
 from wafer_embeddings.model.dino import DinoModel, DINOHead, DINOLoss
 from wafer_embeddings.model.encoder import PerDieViT
 from wafer_embeddings.tokenize import augment as aug

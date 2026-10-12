@@ -15,7 +15,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from wafer_embeddings.data.common import (  # re-exported for back-compat
+from wafer_embeddings.data.common import (  # hygiene helpers re-exported; cell codes used here
     FAIL,
     NO_DIE,
     PASS,
@@ -25,9 +25,6 @@ from wafer_embeddings.data.common import (  # re-exported for back-compat
 )
 
 __all__ = [
-    "FAIL",
-    "NO_DIE",
-    "PASS",
     "BASE_DEFECTS",
     "content_hash",
     "dedup_indices",

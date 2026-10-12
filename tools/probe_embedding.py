@@ -63,6 +63,7 @@ def main(argv=None) -> None:  # pragma: no cover - needs checkpoints + the parqu
     from wafer_embeddings.jobs.train import load_eval_table, load_train_table
     from wafer_embeddings.serving import WaferEncoder, build_encoder
     from wafer_embeddings.train import g1_metrics
+    from wafer_embeddings.train.evaluate import REPORT_KEYS
 
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("parquet")
@@ -99,13 +100,12 @@ def main(argv=None) -> None:  # pragma: no cover - needs checkpoints + the parqu
     t_fit = pca.transform(fit_w, normalize=False)
     t_val = pca.transform(val_w, normalize=False)
 
-    keys = ("xgroup_knn_macro_recall", "xgroup_precision@10", "map@10")
     chance = float(np.mean([(shapes == x).mean() for x in shapes]))
     out: dict = {"shape_chance@10": round(chance, 4)}
 
     def retrieval(emb):
         m = g1_metrics(emb, y, s, len(CLASS_NAMES), class_names=CLASS_NAMES, groups=shapes)
-        return {k: round(m[k], 4) for k in keys}
+        return {k: round(m[k], 4) for k in REPORT_KEYS}
 
     for name, emb in (("pixel_pca", _unit(t_val)), ("polar", polar_fail_embedding(val_w))):
         out[name] = {

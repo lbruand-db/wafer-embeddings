@@ -13,6 +13,8 @@ import json
 import os
 import sys
 
+from wafer_embeddings.train.evaluate import REPORT_KEYS
+
 
 def pip_requirements(torch_version: str, numpy_version: str) -> list[str]:
     """CPU torch wheels (no CUDA, much smaller image) + the runtime deps of the encoder."""
@@ -42,7 +44,7 @@ def pick_run_id(run_ids: list[str], run_name: str, since_ms: int = 0) -> str:
 # Test-split protocol (SPECS.md §8.7, GAPS 6.6): a version is scored on test once; this
 # tag records when, next to the scores (``test_*``) and the polar bar (``test_polar_*``).
 TEST_SCORED_AT = "test_scored_at"
-TEST_TAG_KEYS = ("xgroup_knn_macro_recall", "xgroup_precision@10", "map@10", "cluster_nmi")
+TEST_TAG_KEYS = REPORT_KEYS
 
 
 def test_tags(scores: dict, scored_at: str) -> dict[str, str]:

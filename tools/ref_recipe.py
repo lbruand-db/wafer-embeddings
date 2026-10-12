@@ -25,6 +25,7 @@ import time
 import numpy as np
 
 from wafer_embeddings.jobs.train import LEGACY_RECIPE, _args, train_recipe
+from wafer_embeddings.train.evaluate import REPORT_KEYS
 
 SMALL = "--embed-dim 128 --heads 4 --depth 6 --attention isab --max-tokens 512 --batch-size 32"
 RECIPES = {
@@ -35,13 +36,6 @@ RECIPES = {
 }
 # CPU budget (the GPU job: 10k steps on 100k maps)
 CPU = "--steps 3000 --max-train 20000 --track-every 500"
-KEYS = (
-    "xgroup_knn_macro_recall",
-    "xgroup_precision@10",
-    "knn_macro_recall",
-    "map@10",
-    "cluster_nmi",
-)
 
 
 def recipe_args(name: str, flags: str = ""):
@@ -102,7 +96,7 @@ def main(argv=None) -> None:  # pragma: no cover - CPU training run
         m = g1_metrics(
             emb, eval_y, eval_s, len(CLASS_NAMES), class_names=CLASS_NAMES, groups=shapes
         )
-        return {k: round(m[k], 4) for k in KEYS}
+        return {k: round(m[k], 4) for k in REPORT_KEYS}
 
     def track(step: int) -> None:
         line = {"step": step, "student": score("student"), "teacher": score("teacher")}

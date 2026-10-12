@@ -20,6 +20,7 @@ from wafer_embeddings.data.rows import shape_groups
 from wafer_embeddings.data.wm811k import CLASS_NAMES
 from wafer_embeddings.eval.baselines import DESCRIPTORS
 from wafer_embeddings.obs import get_logger, stage
+from wafer_embeddings.train.evaluate import G1_KEYS, HEADLINE_KEYS
 from wafer_embeddings.train import (
     embed_all,
     fit_dino,
@@ -222,9 +223,6 @@ def eval_metric_keys(split: str, model: str, metrics: dict[str, float]) -> dict[
     return {f"{split}/{model}/{k}": float(v) for k, v in metrics.items()}
 
 
-G1_KEYS = ("xgroup_knn_macro_recall", "xgroup_precision@10")
-
-
 def beats_polar(trained: dict[str, float], polar: dict[str, float]) -> bool:
     """Revised Gate G1 for one run (PLAN.md P1): above polar on both cross-device metrics.
 
@@ -274,16 +272,6 @@ def load_train_table(dset, max_train: int, seed: int):
 
 
 EVAL_SPLITS = ("val", "test")
-# Headline metrics: tracked during training and compared in the final report.
-HEADLINE_KEYS = (
-    "xgroup_knn_macro_recall",
-    "xgroup_precision@10",
-    "knn_acc",
-    "knn_macro_recall",
-    "map@10",
-    "cluster_nmi",
-    "rankme",
-)
 
 
 def load_eval_table(

@@ -23,7 +23,7 @@ import json
 
 def headline(metrics: dict) -> dict:
     """Headline G1 metrics + per-class kNN recall, rounded for the report."""
-    from wafer_embeddings.jobs.train import HEADLINE_KEYS
+    from wafer_embeddings.train.evaluate import HEADLINE_KEYS
 
     return {k: round(metrics[k], 4) for k in HEADLINE_KEYS if k in metrics} | {
         k: round(v, 3) for k, v in metrics.items() if k.startswith("knn_recall_")

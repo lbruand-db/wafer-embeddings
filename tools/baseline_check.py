@@ -18,15 +18,7 @@ import json
 
 import numpy as np
 
-KEYS = (
-    "knn_acc",
-    "knn_macro_recall",
-    "map@10",
-    "cluster_nmi",
-    "xgroup_knn_acc",
-    "xgroup_knn_macro_recall",
-    "xgroup_precision@10",
-)
+from wafer_embeddings.train.evaluate import HEADLINE_KEYS
 
 
 def shape_leak(shapes, labels, splits, lots) -> dict:
@@ -81,10 +73,10 @@ def main(argv=None) -> None:  # pragma: no cover - needs the parquet export
     )
     out = {
         "leak": shape_leak(shapes, y, s, [r.get("lot") for r in rows]),
-        "shape_onehot": {k: round(m_shape[k], 4) for k in KEYS},
-        "polar": {k: round(m_polar[k], 4) for k in KEYS}
+        "shape_onehot": {k: round(m_shape[k], 4) for k in HEADLINE_KEYS if k in m_shape},
+        "polar": {k: round(m_polar[k], 4) for k in HEADLINE_KEYS if k in m_polar}
         | {k: round(v, 3) for k, v in m_polar.items() if k.startswith("knn_recall_")},
-        "pixel_pca": {k: round(m_pixel[k], 4) for k in KEYS},
+        "pixel_pca": {k: round(m_pixel[k], 4) for k in HEADLINE_KEYS if k in m_pixel},
     }
     print(json.dumps(out, indent=1))
 

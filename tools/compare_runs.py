@@ -15,7 +15,8 @@ from __future__ import annotations
 import argparse
 import math
 
-KEYS = ("xgroup_knn_macro_recall", "xgroup_precision@10", "map@10", "cluster_nmi")
+from wafer_embeddings.train.evaluate import REPORT_KEYS as KEYS
+
 MODELS = ("student", "teacher", "polar", "pixel_pca", "dinov2")
 SHORT = {
     "xgroup_knn_macro_recall": "x-recall",

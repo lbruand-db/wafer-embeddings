@@ -11,6 +11,14 @@ import numpy as np
 from wafer_embeddings.eval.metrics import clustering_metrics, retrieval_metrics
 from wafer_embeddings.eval.search import weighted_knn_predict
 
+# Metric-key sets, defined once (``g1_metrics`` names).
+# Gate G1 (PLAN.md P1): the cross-device pair a candidate must win on.
+G1_KEYS = ("xgroup_knn_macro_recall", "xgroup_precision@10")
+# Compared across runs / recorded on a model version: G1 + retrieval + clustering.
+REPORT_KEYS = G1_KEYS + ("map@10", "cluster_nmi")
+# Tracked during training and logged in the final report (rankme is added by the job).
+HEADLINE_KEYS = G1_KEYS + ("knn_acc", "knn_macro_recall", "map@10", "cluster_nmi", "rankme")
+
 
 def stratified_indices(
     label_ids: np.ndarray, n: int, rng: np.random.Generator, balanced: bool = True

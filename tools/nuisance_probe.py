@@ -65,6 +65,7 @@ def main(argv=None) -> None:  # pragma: no cover - CPU training run
     from wafer_embeddings.jobs.train import load_eval_table, load_train_table
     from wafer_embeddings.model.dino import DinoModel, DINOHead, DINOLoss
     from wafer_embeddings.serving.encoder import build_encoder
+    from wafer_embeddings.train.evaluate import REPORT_KEYS
     from wafer_embeddings.train import embed_all, fit_dino, g1_metrics, wafers_from_rows
 
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -106,8 +107,9 @@ def main(argv=None) -> None:  # pragma: no cover - CPU training run
         m = g1_metrics(
             emb, eval_y, eval_s, len(CLASS_NAMES), class_names=CLASS_NAMES, groups=shapes
         )
-        keys = ("knn_macro_recall", "map@10", "xgroup_knn_macro_recall", "xgroup_precision@10")
-        return nuisance_probe(emb, eval_y, shapes, logdies) | {k: round(m[k], 4) for k in keys}
+        return nuisance_probe(emb, eval_y, shapes, logdies) | {
+            k: round(m[k], 4) for k in REPORT_KEYS
+        }
 
     t0 = time.time()
     before = report()

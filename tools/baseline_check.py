@@ -56,6 +56,7 @@ def shape_onehot(shapes) -> np.ndarray:
 def main(argv=None) -> None:  # pragma: no cover - needs the parquet export
     import pyarrow.dataset as ds
 
+    from wafer_embeddings.data.rows import shape_groups
     from wafer_embeddings.data.wm811k import CLASS_NAMES
     from wafer_embeddings.eval.baselines import pixel_pca_embedding, polar_fail_embedding
     from wafer_embeddings.jobs.train import load_eval_table
@@ -69,8 +70,8 @@ def main(argv=None) -> None:  # pragma: no cover - needs the parquet export
     a = p.parse_args(argv)
     dset = ds.dataset(a.parquet, format="parquet")
     rows = load_eval_table(dset, a.eval_cap, a.seed, query_split=a.split).to_pylist()
-    wafers, y, s = wafers_from_rows(rows, max_tokens=512, rng=np.random.default_rng(a.seed))
-    shapes = np.array([f"{r['height']}x{r['width']}" for r in rows], dtype=object)
+    wafers, y, s = wafers_from_rows(rows, max_tokens=512)
+    shapes = shape_groups(rows)
     m_shape = g1_metrics(shape_onehot(shapes), y, s, len(CLASS_NAMES), groups=shapes)
     m_polar = g1_metrics(
         polar_fail_embedding(wafers), y, s, len(CLASS_NAMES), class_names=CLASS_NAMES, groups=shapes

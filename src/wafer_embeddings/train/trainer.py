@@ -13,34 +13,25 @@ from typing import Callable
 import numpy as np
 
 from wafer_embeddings.tokenize.augment import random_view
-from wafer_embeddings.tokenize.tokenizer import TokenizedWafer, cap_tokens, collate, tokenize
+from wafer_embeddings.data.rows import row_map
+from wafer_embeddings.tokenize.tokenizer import TokenizedWafer, collate, tokenize_capped
 from wafer_embeddings.train.positives import sample_neighbours
 
 
 def wafers_from_rows(
-    rows, max_tokens: int | None = None, rng: np.random.Generator | None = None
+    rows, max_tokens: int | None = None, seed: int = 0
 ) -> tuple[list[TokenizedWafer], np.ndarray, np.ndarray]:
     """Reconstruct + tokenize wafers from Delta/parquet row dicts.
 
     Each row has a flattened ``wafer_map`` plus ``height``/``width``; returns the
     tokenized wafers alongside aligned ``label_id`` and ``split`` arrays. ``max_tokens``
-    caps giant wafers (bounds GPU memory, SPECS.md §4).
+    caps giant wafers (bounds GPU memory, SPECS.md §4), per map with ``seed``
+    (``tokenize_capped``): seed 0 gives exactly the dies the served encoder sees.
     """
-    if rng is None:
-        rng = np.random.default_rng(0)
-    wafers: list[TokenizedWafer] = []
-    labels: list[int] = []
-    splits: list[str] = []
-    for r in rows:
-        h, w = int(r["height"]), int(r["width"])
-        m = np.asarray(r["wafer_map"], dtype=np.uint8).reshape(h, w)
-        tw = tokenize(m)
-        if max_tokens:
-            tw = cap_tokens(tw, max_tokens, rng)
-        wafers.append(tw)
-        labels.append(int(r["label_id"]))
-        splits.append(str(r["split"]))
-    return wafers, np.array(labels, dtype=np.int64), np.array(splits, dtype=object)
+    wafers = [tokenize_capped(row_map(r), max_tokens, seed) for r in rows]
+    labels = np.array([int(r["label_id"]) for r in rows], dtype=np.int64)
+    splits = np.array([str(r["split"]) for r in rows], dtype=object)
+    return wafers, labels, splits
 
 
 def _to_device(views: list[tuple], device: str) -> list[tuple]:

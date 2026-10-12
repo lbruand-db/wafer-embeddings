@@ -181,3 +181,48 @@ def test_random_view_with_strong_aug_differs_more_between_views():
     assert base.n_tokens == w.n_tokens
     assert strong.n_tokens < 0.6 * w.n_tokens
     assert int((strong.state_ids == tk.STATE_FAIL).sum()) < 0.4 * n_fail
+
+
+def _big_map(n=40, seed=0):
+    rng = np.random.default_rng(seed)
+    m = np.full((n, n), PASS, dtype=np.uint8)
+    m[rng.random((n, n)) < 0.05] = FAIL
+    return m
+
+
+def test_tokenize_capped_is_per_map_and_keeps_fails():
+    m = _big_map()
+    a = tk.tokenize_capped(m, 200)
+    b = tk.tokenize_capped(m, 200)
+    np.testing.assert_array_equal(a.coords, b.coords)  # depends only on the map + seed
+    assert a.n_tokens == 200
+    assert (a.state_ids == tk.STATE_FAIL).sum() == (m == FAIL).sum()  # every FAIL die kept
+    assert not np.array_equal(a.coords, tk.tokenize_capped(m, 200, seed=1).coords)
+    assert tk.tokenize_capped(m, None).n_tokens == tk.tokenize(m).n_tokens  # no cap
+
+
+def test_training_eval_and_serving_tokenize_alike():
+    from wafer_embeddings.data.rows import rows_to_maps, shape_groups
+    from wafer_embeddings.serving import WaferEncoder, build_encoder
+    from wafer_embeddings.train import wafers_from_rows
+
+    maps = [_big_map(40, s) for s in range(3)] + [_big_map(10, 9)]
+    rows = [
+        {
+            "height": m.shape[0],
+            "width": m.shape[1],
+            "wafer_map": m.ravel().tolist(),
+            "label_id": 0,
+            "split": "val",
+        }
+        for m in maps
+    ]
+    assert [x.shape for x in rows_to_maps(rows)] == [m.shape for m in maps]
+    assert shape_groups(rows).tolist() == ["40x40"] * 3 + ["10x10"]
+    cfg = {"embed_dim": 16, "depth": 1, "heads": 4, "attention": "full", "max_tokens": 300}
+    enc = WaferEncoder(build_encoder(cfg).state_dict(), cfg)
+    wafers, _, _ = wafers_from_rows(rows, max_tokens=300)
+    alone, _, _ = wafers_from_rows(rows[2:3], max_tokens=300)  # batch composition is irrelevant
+    np.testing.assert_array_equal(alone[0].coords, wafers[2].coords)
+    for w, m in zip(wafers, maps):
+        np.testing.assert_array_equal(w.coords, enc.tokenize_map(m).coords)

@@ -60,6 +60,7 @@ def main(argv=None) -> None:  # pragma: no cover - CPU training run
 
     import wafer_embeddings.train.trainer as trainer_mod
     from wafer_embeddings.data.common import NO_DIE
+    from wafer_embeddings.data.rows import shape_groups
     from wafer_embeddings.data.wm811k import CLASS_NAMES
     from wafer_embeddings.jobs.train import load_eval_table, load_train_table
     from wafer_embeddings.model.dino import DinoModel, DINOHead, DINOLoss
@@ -88,10 +89,10 @@ def main(argv=None) -> None:  # pragma: no cover - CPU training run
 
     dset = ds.dataset(a.parquet, format="parquet")
     train_rows = load_train_table(dset, a.max_train, a.seed).to_pylist()
-    train_w, _, _ = wafers_from_rows(train_rows, max_tokens=a.max_tokens, rng=rng)
+    train_w, _, _ = wafers_from_rows(train_rows, max_tokens=a.max_tokens, seed=a.seed)
     rows = load_eval_table(dset, a.eval_cap, a.seed).to_pylist()  # val queries (protocol)
-    eval_w, eval_y, eval_s = wafers_from_rows(rows, max_tokens=a.max_tokens, rng=rng)
-    shapes = np.array([f"{r['height']}x{r['width']}" for r in rows], dtype=object)
+    eval_w, eval_y, eval_s = wafers_from_rows(rows, max_tokens=a.max_tokens)
+    shapes = shape_groups(rows)
     logdies = np.log([max(sum(1 for c in r["wafer_map"] if c != NO_DIE), 1) for r in rows])
 
     enc = PerDieViT(

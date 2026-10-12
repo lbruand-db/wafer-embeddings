@@ -57,6 +57,7 @@ def main(argv=None) -> None:  # pragma: no cover - needs checkpoints + the parqu
 
     from nuisance_probe import nuisance_probe  # tools/ sibling (run from tools/)
     from wafer_embeddings.data.common import NO_DIE
+    from wafer_embeddings.data.rows import rows_to_maps, shape_groups
     from wafer_embeddings.data.wm811k import CLASS_NAMES
     from wafer_embeddings.eval.baselines import pixel_grid_features, polar_fail_embedding
     from wafer_embeddings.jobs.train import load_eval_table, load_train_table
@@ -77,15 +78,12 @@ def main(argv=None) -> None:  # pragma: no cover - needs checkpoints + the parqu
     torch.set_num_threads(6)
     dset = ds.dataset(a.parquet, format="parquet")
 
-    def to_maps(rows):
-        return [np.asarray(r["wafer_map"], np.uint8).reshape(r["height"], r["width"]) for r in rows]
-
-    fit_maps = to_maps(load_train_table(dset, a.fit_maps, a.seed + 7).to_pylist())
+    fit_maps = rows_to_maps(load_train_table(dset, a.fit_maps, a.seed + 7).to_pylist())
     rows = load_eval_table(dset, a.eval_cap, a.seed).to_pylist()
-    maps = to_maps(rows)
+    maps = rows_to_maps(rows)
     y = np.array([r["label_id"] for r in rows])
     s = np.array([r["split"] for r in rows], dtype=object)
-    shapes = np.array([f"{r['height']}x{r['width']}" for r in rows], dtype=object)
+    shapes = shape_groups(rows)
     logdies = np.log([max(int((m != NO_DIE).sum()), 1) for m in maps])
 
     encoders = {n: WaferEncoder.from_checkpoint(c) for n, c in zip(a.names, a.checkpoint)}

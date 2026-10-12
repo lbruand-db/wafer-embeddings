@@ -76,6 +76,19 @@ def cap_tokens(w: TokenizedWafer, max_tokens: int, rng: np.random.Generator) -> 
     return TokenizedWafer(w.coords[keep], w.state_ids[keep])
 
 
+def tokenize_capped(wafer_map: np.ndarray, max_tokens: int | None, seed: int = 0) -> TokenizedWafer:
+    """Tokenize + cap one map with its **own** RNG (``default_rng(seed)``).
+
+    The one tokenization path for training, evaluation and serving: a map's capped dies
+    depend only on the map and ``seed``, never on which other maps were processed before
+    it, so eval numbers describe exactly what the served encoder sees (seed 0).
+    """
+    tw = tokenize(np.asarray(wafer_map, dtype=np.uint8))
+    if max_tokens:
+        tw = cap_tokens(tw, max_tokens, np.random.default_rng(seed))
+    return tw
+
+
 def collate(batch: list[TokenizedWafer]):
     """Pad a batch to the max token count; return torch tensors + validity mask.
 

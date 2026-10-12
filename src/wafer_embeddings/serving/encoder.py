@@ -14,7 +14,7 @@ from typing import Any
 
 import numpy as np
 
-from wafer_embeddings.tokenize.tokenizer import cap_tokens, collate, tokenize
+from wafer_embeddings.tokenize.tokenizer import collate, tokenize_capped
 
 # Architecture keys read from the training config (train job argparse names).
 _ARCH_DEFAULTS: dict[str, Any] = {
@@ -76,8 +76,7 @@ class WaferEncoder:
         return cls(ck["state_dict"], ck["config"], device=device)
 
     def tokenize_map(self, wafer_map: np.ndarray):
-        tw = tokenize(np.asarray(wafer_map, dtype=np.uint8))
-        return cap_tokens(tw, self.max_tokens, np.random.default_rng(self.seed))
+        return tokenize_capped(wafer_map, self.max_tokens, self.seed)
 
     def embed_maps(self, maps: list[np.ndarray], batch_size: int = 128) -> np.ndarray:
         import torch

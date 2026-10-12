@@ -50,6 +50,7 @@ def score(checkpoint: str, parquet: str, eval_cap: int, seed: int) -> dict:  # p
     import pyarrow.dataset as ds
     import torch
 
+    from wafer_embeddings.data.rows import rows_to_maps, shape_groups
     from wafer_embeddings.data.wm811k import CLASS_NAMES
     from wafer_embeddings.eval.baselines import polar_fail_embedding
     from wafer_embeddings.jobs.train import load_eval_table
@@ -59,10 +60,10 @@ def score(checkpoint: str, parquet: str, eval_cap: int, seed: int) -> dict:  # p
     enc = WaferEncoder.from_checkpoint(checkpoint)
     dset = ds.dataset(parquet, format="parquet")
     rows = load_eval_table(dset, eval_cap, seed, query_split="test").to_pylist()
-    maps = [np.asarray(r["wafer_map"], np.uint8).reshape(r["height"], r["width"]) for r in rows]
+    maps = rows_to_maps(rows)
     y = np.array([r["label_id"] for r in rows])
     s = np.array([r["split"] for r in rows], dtype=object)
-    g = np.array([f"{r['height']}x{r['width']}" for r in rows], dtype=object)
+    g = shape_groups(rows)
     torch.manual_seed(0)
     untrained = WaferEncoder(build_encoder(enc.config).state_dict(), enc.config)
     embs = {

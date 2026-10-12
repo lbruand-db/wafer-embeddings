@@ -16,6 +16,7 @@ import argparse
 
 import numpy as np
 
+from wafer_embeddings.data.rows import shape_groups
 from wafer_embeddings.data.wm811k import CLASS_NAMES
 from wafer_embeddings.obs import get_logger, stage
 from wafer_embeddings.train import (
@@ -190,7 +191,7 @@ def _args(argv=None):
         "--eval-seed",
         type=int,
         default=None,
-        help="Eval-sample seed (which labeled maps, their token caps); default: --seed. "
+        help="Eval-sample seed (which labeled maps; caps use seed 0, as serving); default: --seed. "
         "Fix it while varying --seed to measure training noise alone (GAPS 1.2).",
     )
     a = p.parse_args(argv)
@@ -338,7 +339,7 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
     with stage(log, "load train split (seeded random sample)"):
         tbl = load_train_table(dset, a.max_train, a.seed)
         train_wafers, train_labels, _ = wafers_from_rows(
-            tbl.to_pylist(), max_tokens=a.max_tokens, rng=rng
+            tbl.to_pylist(), max_tokens=a.max_tokens, seed=a.seed
         )
     neighbours = None
     if a.nn_positives:
@@ -365,11 +366,9 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
             query_split=a.eval_split,
         )
         rows = tbl.to_pylist()
-        eval_wafers, eval_labels, eval_splits = wafers_from_rows(
-            rows, max_tokens=a.max_tokens, rng=np.random.default_rng([a.eval_seed, 2])
-        )
-        # map shape = device proxy: devices span lots, so same-shape neighbours share labels
-        eval_groups = np.array([f"{r['height']}x{r['width']}" for r in rows], dtype=object)
+        # cap seed 0, as in serving: the eval sees the dies the served encoder sees
+        eval_wafers, eval_labels, eval_splits = wafers_from_rows(rows, max_tokens=a.max_tokens)
+        eval_groups = shape_groups(rows)
         del rows
     q = eval_splits == a.eval_split
     mix = dict(zip(*(v.tolist() for v in np.unique(eval_labels[q], return_counts=True))))

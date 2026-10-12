@@ -1,7 +1,8 @@
 # Batch-embed all wafer maps with the UC encoder (@champion) on AI Runtime (SPECS.md §10).
 # Serverless Spark Python workers OOM importing CUDA torch, so the heavy step runs here
-# (proven torch env, GPU) and writes parquet to the volume; the bundle job `embed`
-# (wafer-embed-load) then loads it into Delta with change data feed on.
+# (proven torch env, GPU) and writes parquet to the volume; the `publish` job's `load`
+# task (wafer-embed-load) then loads it into Delta with change data feed on. The job runs
+# ai_runtime/commands/embed.sh; this YAML is for ad-hoc `air run`s.
 #
 # Run:   databricks air run --file ai_runtime/embed.yaml --profile mmf
 # Smoke: ... --override env_variables.LIMIT=2000 --override env_variables.OUT=wafer_map_embeddings_smoke_parquet

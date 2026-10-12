@@ -2,9 +2,9 @@
 #
 # Launched with:  databricks air run --file ai_runtime/train.yaml --profile mmf
 # Validate first: databricks air run --file ai_runtime/train.yaml --dry-run --profile mmf
-# Smoke test:     ... --override env_variables.STEPS=50 \
-#                     --override env_variables.MAX_TRAIN=2000 \
-#                     --override env_variables.TRACK_EVERY=0
+# Smoke test:     ... --override "env_variables.EXTRA_ARGS=--steps 50 --max-train 2000 --track-every 0"
+# Any recipe:     ... --override env_variables.RUN_NAME=nnpix-k5 \
+#                     --override "env_variables.EXTRA_ARGS=--nn-positives 5 --seed 1 --eval-seed 0"
 #
 # Local code is shipped the documented way: code_source.snapshot uploads ./src and
 # exposes it to the command via $CODE_SOURCE_PATH (no wheel/volume install).
@@ -39,43 +39,18 @@ code_source:
     root_path: ../src
     remote_volume: /Volumes/mmf_mlops_demo_catalog/wafer_embeddings/raw
 
-# Overridable knobs (see --override above); the numeric defaults mirror the argparse
-# defaults in jobs/train.py (full Gate-G1 run). Keep the two in sync when changing them.
+# Overridable knobs (--override above). Every training default lives in jobs/train.py's
+# argparse (the R1 recipe behind wafer_encoder v2; the superseded one is
+# jobs.train.LEGACY_RECIPE), so nothing here can drift from it: pass any other flag in
+# EXTRA_ARGS (word-split on purpose; globbing is disabled in the command).
 env_variables:
   PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True # reduce CUDA fragmentation
-  MAX_TRAIN: "100000"
-  EVAL_CAP: "1000" # per side: EVAL_SPLIT queries + train kNN bank (seeded, class-stratified)
-  STEPS: "10000"
-  BATCH_SIZE: "32"
-  DEPTH: "6"
-  MAX_TOKENS: "512"
-  LR: "0" # 0 = DINO rule 5e-4 * batch / 256
-  WARMUP_FRAC: "0.1"
-  FREEZE_LAST_FRAC: "0.01" # DINO prototype-layer freeze (stabilizer)
-  CLIP_GRAD: "3" # global grad-norm clip, 0 = off
-  EVAL_SPLIT: "val" # development protocol; "test" only for the final report
-  TRACK_EVERY: "1000" # log student+teacher eval metrics every N steps (log-only); set 0 with EVAL_SPLIT=test
   RUN_NAME: "dino" # MLflow run name (the job opens its own run)
-  EMBED_DIM: "128"
-  HEADS: "4"
-  # Defaults = the R1 recipe behind wafer_encoder v2 (multi-crop, pre-LN, WD schedule,
-  # head 2048/256, 3% die noise: see jobs/train.py). The superseded recipe is
-  # jobs.train.LEGACY_RECIPE. Any other jobs/train.py flags go here. Word-split on purpose
-  # (globbing is disabled in the command). Appended last, so a flag repeated here wins
-  # over the named variables above (argparse keeps the last value) - don't repeat them.
+  EVAL_SPLIT: "val" # development protocol; "test" only for the final report
   EXTRA_ARGS: ""
-  # ISAB (O(N*m)) is the default: WM-811K has large variable-size maps for which
-  # full O(N^2) attention OOMs an A10 (SPECS.md §4 / de-risking R3).
-  ATTENTION: "isab"
 
 command: |
   set -f  # EXTRA_ARGS is word-split but must never glob-expand
   PYTHONPATH="$CODE_SOURCE_PATH" python -m wafer_embeddings.jobs.train \
     --catalog mmf_mlops_demo_catalog --schema wafer_embeddings \
-    --max-train "$MAX_TRAIN" --eval-cap "$EVAL_CAP" --steps "$STEPS" \
-    --batch-size "$BATCH_SIZE" --attention "$ATTENTION" \
-    --depth "$DEPTH" --max-tokens "$MAX_TOKENS" --lr "$LR" \
-    --warmup-frac "$WARMUP_FRAC" --freeze-last-frac "$FREEZE_LAST_FRAC" \
-    --clip-grad "$CLIP_GRAD" \
-    --eval-split "$EVAL_SPLIT" --track-every "$TRACK_EVERY" \
-    --embed-dim "$EMBED_DIM" --heads "$HEADS" --run-name "$RUN_NAME" $EXTRA_ARGS
+    --eval-split "$EVAL_SPLIT" --run-name "$RUN_NAME" $EXTRA_ARGS

@@ -16,19 +16,27 @@ import numpy as np
 
 from wafer_embeddings.tokenize.tokenizer import collate, tokenize_capped
 
-# Architecture keys read from the training config (train job argparse names).
+# Architecture keys read from the training config (train job argparse names). The
+# defaults are what checkpoints saved before a key existed were trained with.
 _ARCH_DEFAULTS: dict[str, Any] = {
     "embed_dim": 384,
     "depth": 12,
     "heads": 6,
     "attention": "isab",
     "pre_norm": False,
+    "n_bands": 6,
+    "n_inducing": 32,
     "max_tokens": 4096,
 }
 
 
-def build_encoder(config: dict):
-    """A ``PerDieViT`` with the architecture recorded in a training config."""
+def build_encoder(config: dict, grad_checkpoint: bool = False):
+    """A ``PerDieViT`` with the architecture recorded in a training config.
+
+    The **only** place an encoder is built — the train job builds from its own args, so
+    the architecture a checkpoint was trained with is by construction the one serving
+    rebuilds from the saved config. ``grad_checkpoint`` is training-only (no weights).
+    """
     from wafer_embeddings.model.encoder import PerDieViT
 
     c = _ARCH_DEFAULTS | {k: config[k] for k in _ARCH_DEFAULTS if k in config}
@@ -39,6 +47,9 @@ def build_encoder(config: dict):
         n_heads=int(c["heads"]),
         attention=str(c["attention"]),
         pre_norm=bool(c["pre_norm"]),
+        n_bands=int(c["n_bands"]),
+        n_inducing=int(c["n_inducing"]),
+        grad_checkpoint=grad_checkpoint,
     )
 
 

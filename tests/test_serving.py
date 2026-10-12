@@ -249,3 +249,20 @@ def test_register_latest_run_selection():
         "--experiment /x --alias candidate".split()
     )
     assert (a.latest_run_name, a.since_ms, a.alias) == ("pipeline-train", 7, "candidate")
+
+
+def test_train_args_and_served_config_build_the_same_encoder():
+    from wafer_embeddings.jobs.train import _args
+    from wafer_embeddings.tokenize.tokenizer import collate
+
+    a = _args(["--catalog", "c", "--schema", "s", "--depth", "2", "--embed-dim", "32"])
+    trained = build_encoder(vars(a), grad_checkpoint=True)  # how the train job builds it
+    served = WaferEncoder(trained.state_dict(), vars(a))  # strict load from the saved config
+    m = _map(3, 6, 8)
+    trained.eval()
+    with torch.no_grad():
+        ref = trained(*collate([served.tokenize_map(m)])).numpy()
+    np.testing.assert_allclose(served.embed_maps([m]), ref, atol=1e-5)
+    # a non-default architecture key survives the round trip
+    odd = build_encoder({"embed_dim": 16, "depth": 1, "heads": 4, "n_bands": 3})
+    WaferEncoder(odd.state_dict(), {"embed_dim": 16, "depth": 1, "heads": 4, "n_bands": 3})

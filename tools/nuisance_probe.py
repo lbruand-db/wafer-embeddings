@@ -64,7 +64,7 @@ def main(argv=None) -> None:  # pragma: no cover - CPU training run
     from wafer_embeddings.data.wm811k import CLASS_NAMES
     from wafer_embeddings.jobs.train import load_eval_table, load_train_table
     from wafer_embeddings.model.dino import DinoModel, DINOHead, DINOLoss
-    from wafer_embeddings.model.encoder import PerDieViT
+    from wafer_embeddings.serving.encoder import build_encoder
     from wafer_embeddings.train import embed_all, fit_dino, g1_metrics, wafers_from_rows
 
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -95,14 +95,8 @@ def main(argv=None) -> None:  # pragma: no cover - CPU training run
     shapes = shape_groups(rows)
     logdies = np.log([max(sum(1 for c in r["wafer_map"] if c != NO_DIE), 1) for r in rows])
 
-    enc = PerDieViT(
-        embed_dim=a.width,
-        width=a.width,
-        depth=a.depth,
-        n_heads=4,
-        attention="isab",
-        n_bands=a.n_bands,
-    )
+    arch = {"embed_dim": a.width, "depth": a.depth, "heads": 4, "attention": "isab"}
+    enc = build_encoder(arch | {"pre_norm": False, "n_bands": a.n_bands})
     dino = DinoModel(enc, DINOHead(a.width, out_dim=1024))
     params = list(dino.student_enc.parameters()) + list(dino.student_head.parameters())
     opt = torch.optim.AdamW(params, lr=a.lr, weight_decay=0.0)

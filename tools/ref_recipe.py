@@ -60,7 +60,7 @@ def main(argv=None) -> None:  # pragma: no cover - CPU training run
     from wafer_embeddings.data.wm811k import CLASS_NAMES
     from wafer_embeddings.jobs.train import load_eval_table, load_train_table
     from wafer_embeddings.model.dino import DinoModel, DINOHead, DINOLoss
-    from wafer_embeddings.model.encoder import PerDieViT
+    from wafer_embeddings.serving.encoder import build_encoder
     from wafer_embeddings.train import embed_all, fit_dino, g1_metrics, param_groups
     from wafer_embeddings.train import wafers_from_rows
 
@@ -95,14 +95,7 @@ def main(argv=None) -> None:  # pragma: no cover - CPU training run
         )
         neighbours = descriptor_neighbours(desc, a.nn_positives)
 
-    enc = PerDieViT(
-        embed_dim=a.embed_dim,
-        width=a.embed_dim,
-        depth=a.depth,
-        n_heads=a.heads,
-        attention=a.attention,
-        pre_norm=a.pre_norm,
-    )
+    enc = build_encoder(vars(a))
     dino = DinoModel(enc, DINOHead(a.embed_dim, out_dim=a.out_dim, bottleneck=a.bottleneck))
     opt = torch.optim.AdamW(
         param_groups(dino.student_enc, dino.student_head), lr=r["lr"], weight_decay=a.weight_decay

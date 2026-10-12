@@ -322,7 +322,8 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
     from wafer_embeddings.eval.baselines import pixel_pca_embedding, polar_fail_embedding
     from wafer_embeddings.eval.metrics import effective_rank, rankme
     from wafer_embeddings.model.dino import DinoModel, DINOHead, DINOLoss
-    from wafer_embeddings.model.encoder import PerDieViT, count_parameters
+    from wafer_embeddings.model.encoder import count_parameters
+    from wafer_embeddings.serving.encoder import build_encoder
     from wafer_embeddings.train.positives import descriptor_neighbours, label_neighbours
 
     a = _args(argv)
@@ -374,15 +375,7 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
     mix = dict(zip(*(v.tolist() for v in np.unique(eval_labels[q], return_counts=True))))
     log.info(f"train={len(train_wafers)} eval_labeled={len(eval_wafers)} query class mix={mix}")
 
-    encoder = PerDieViT(
-        embed_dim=a.embed_dim,
-        width=a.embed_dim,
-        depth=a.depth,
-        n_heads=a.heads,
-        attention=a.attention,
-        grad_checkpoint=a.grad_checkpoint,
-        pre_norm=a.pre_norm,
-    )
+    encoder = build_encoder(vars(a), grad_checkpoint=a.grad_checkpoint)
     head = DINOHead(a.embed_dim, out_dim=a.out_dim, bottleneck=a.bottleneck)
     dino = DinoModel(encoder, head).to(device)
     loss_fn = DINOLoss(out_dim=a.out_dim).to(device)

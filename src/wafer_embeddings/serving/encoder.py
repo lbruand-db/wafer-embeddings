@@ -86,6 +86,15 @@ class WaferEncoder:
         ck = torch.load(path, map_location=device, weights_only=False)
         return cls(ck["state_dict"], ck["config"], device=device)
 
+    @classmethod
+    def untrained(cls, config: dict, seed: int = 0, device: str = "cpu") -> WaferEncoder:
+        """A freshly initialized encoder of the same architecture (seeded): the "untrained"
+        bar a trained checkpoint is compared with."""
+        import torch
+
+        torch.manual_seed(seed)
+        return cls(build_encoder(config).state_dict(), config, device=device)
+
     def tokenize_map(self, wafer_map: np.ndarray):
         return tokenize_capped(wafer_map, self.max_tokens, self.seed)
 

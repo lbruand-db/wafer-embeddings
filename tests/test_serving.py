@@ -266,3 +266,13 @@ def test_train_args_and_served_config_build_the_same_encoder():
     # a non-default architecture key survives the round trip
     odd = build_encoder({"embed_dim": 16, "depth": 1, "heads": 4, "n_bands": 3})
     WaferEncoder(odd.state_dict(), {"embed_dim": 16, "depth": 1, "heads": 4, "n_bands": 3})
+
+
+def test_untrained_is_seeded_and_same_architecture():
+    cfg = {"embed_dim": 16, "depth": 1, "heads": 4, "attention": "full"}
+    a, b = WaferEncoder.untrained(cfg), WaferEncoder.untrained(cfg)
+    c = WaferEncoder.untrained(cfg, seed=1)
+    m = _map(3, 6, 8)
+    np.testing.assert_array_equal(a.embed_maps([m]), b.embed_maps([m]))
+    assert not np.allclose(a.embed_maps([m]), c.embed_maps([m]))
+    assert a.dim == 16

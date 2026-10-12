@@ -61,7 +61,7 @@ def main(argv=None) -> None:  # pragma: no cover - needs checkpoints + the parqu
     from wafer_embeddings.data.wm811k import CLASS_NAMES
     from wafer_embeddings.eval.baselines import PixelPCA, polar_fail_embedding
     from wafer_embeddings.jobs.train import load_eval_table, load_train_table
-    from wafer_embeddings.serving import WaferEncoder, build_encoder
+    from wafer_embeddings.serving import WaferEncoder
     from wafer_embeddings.train import g1_metrics
     from wafer_embeddings.train.evaluate import REPORT_KEYS
 
@@ -89,10 +89,7 @@ def main(argv=None) -> None:  # pragma: no cover - needs checkpoints + the parqu
 
     encoders = {n: WaferEncoder.from_checkpoint(c) for n, c in zip(a.names, a.checkpoint)}
     ref = next(iter(encoders.values()))
-    torch.manual_seed(0)
-    encoders = {"untrained": WaferEncoder(build_encoder(ref.config).state_dict(), ref.config)} | (
-        encoders
-    )
+    encoders = {"untrained": WaferEncoder.untrained(ref.config)} | encoders
     # descriptor target on the same capped tokens the encoders see
     fit_w = [ref.tokenize_map(m) for m in fit_maps]
     val_w = [ref.tokenize_map(m) for m in maps]

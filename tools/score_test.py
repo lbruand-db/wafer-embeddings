@@ -48,13 +48,12 @@ def _args(argv=None):
 def score(checkpoint: str, parquet: str, eval_cap: int, seed: int) -> dict:  # pragma: no cover
     import numpy as np
     import pyarrow.dataset as ds
-    import torch
 
     from wafer_embeddings.data.rows import rows_to_maps, shape_groups
     from wafer_embeddings.data.wm811k import CLASS_NAMES
     from wafer_embeddings.eval.baselines import polar_fail_embedding
     from wafer_embeddings.jobs.train import load_eval_table
-    from wafer_embeddings.serving import WaferEncoder, build_encoder
+    from wafer_embeddings.serving import WaferEncoder
     from wafer_embeddings.train import g1_metrics
 
     enc = WaferEncoder.from_checkpoint(checkpoint)
@@ -64,8 +63,7 @@ def score(checkpoint: str, parquet: str, eval_cap: int, seed: int) -> dict:  # p
     y = np.array([r["label_id"] for r in rows])
     s = np.array([r["split"] for r in rows], dtype=object)
     g = shape_groups(rows)
-    torch.manual_seed(0)
-    untrained = WaferEncoder(build_encoder(enc.config).state_dict(), enc.config)
+    untrained = WaferEncoder.untrained(enc.config)
     embs = {
         "trained": enc.embed_maps(maps),
         "untrained": untrained.embed_maps(maps),

@@ -28,7 +28,6 @@ from wafer_embeddings.train import (
     g1_metrics,
     param_groups,
     scaled_lr,
-    selection_score,
     stratified_indices,
     wafers_from_rows,
 )
@@ -167,13 +166,6 @@ def _args(argv=None):
     )
     p.add_argument("--clip-grad", type=float, default=3.0, help="Global grad-norm clip (0 = off).")
     p.add_argument("--warmup-frac", type=float, default=0.1, help="LR linear-warmup fraction.")
-    p.add_argument(
-        "--select-every",
-        type=int,
-        default=0,
-        help="Score a checkpoint on the train-side labeled kNN bank every N steps and keep "
-        "the best (0 = off: train for a fixed schedule, no labels anywhere in training).",
-    )
     p.add_argument(
         "--track-every",
         type=int,
@@ -470,14 +462,6 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
     # already a seeded random draw, so its head is a random probe set).
     probe_wafers = train_wafers[: a.probe_size]
 
-    # Checkpoint selection uses only the labeled train-side bank, never the G1 queries.
-    bank = np.nonzero(ev.splits == "train")[0]
-    bank_wafers = [ev.wafers[i] for i in bank]
-
-    def _select() -> float:
-        emb = _embed(wafers=bank_wafers)
-        return selection_score(emb, ev.labels[bank], N_CLASSES, groups=ev.groups[bank])
-
     def _track(step: int) -> None:
         for which in ("student", "teacher"):
             r = rankme(_embed(which, probe_wafers))
@@ -545,8 +529,6 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
                 log=log.info,
                 log_every=50,
                 monitor=_monitor,
-                select_fn=_select if a.select_every else None,
-                select_every=a.select_every,
                 track_fn=_track if a.track_every else None,
                 neighbours=neighbours,
                 **fit_kwargs(a, recipe),

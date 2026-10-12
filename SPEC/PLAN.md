@@ -88,7 +88,7 @@ token cap** (WM-811K's giant maps make full attention OOM, so ISAB is the defaul
    pixel-PCA baselines (§16 1, 24) still to wire.
 5. **Label protocol** (SPECS §8.7): labels evaluation-only (no labels in training or
    checkpointing); develop on **val**; score **test once** for the final report. ✅ enforced
-   in code (`--eval-split`, keep-best off by default, no tracking on test).
+   in code (`--eval-split`, no checkpoint selection, no tracking on test).
 6. **False-negative check:** pure DINO vs. SWaCo same-class positives on retrieval (§16 3).
 
 **Status (2026-10-09).** What we learned getting here:

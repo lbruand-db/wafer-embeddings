@@ -371,7 +371,8 @@ vs. last-4-CLS concat vs. backbone output — these differ in DINO) [1].
   (also report transductive). WM-811K contains genuine duplicate maps, so content-hash
   **dedup** (696,599 unique of 811,457) runs before splitting.
 - **Label protocol:** labels are **evaluation-only**; no label enters training (sampling,
-  loss, weighting, or checkpointing; keep-best selection is off by default). All
+  loss, weighting, or checkpointing: training runs a fixed schedule and keeps the final
+  weights; the one label-using ablation, `--label-positives`, can't be registered). All
   development decisions (ablations, hyperparameters, recipe choices) are judged on
   **val**-split queries against a train-split labeled kNN bank (`--eval-split val`, the
   default). The **test** split is scored **once**, for the final report

@@ -53,7 +53,6 @@ env_variables:
   WARMUP_FRAC: "0.1"
   FREEZE_LAST_FRAC: "0.01" # DINO prototype-layer freeze (stabilizer)
   CLIP_GRAD: "3" # global grad-norm clip, 0 = off
-  SELECT_EVERY: "0" # keep-best off: no labels in training (it would use train-split labels)
   EVAL_SPLIT: "val" # development protocol; "test" only for the final report
   TRACK_EVERY: "1000" # log student+teacher eval metrics every N steps (log-only); set 0 with EVAL_SPLIT=test
   RUN_NAME: "dino" # MLflow run name (the job opens its own run)
@@ -77,6 +76,6 @@ command: |
     --batch-size "$BATCH_SIZE" --attention "$ATTENTION" \
     --depth "$DEPTH" --max-tokens "$MAX_TOKENS" --lr "$LR" \
     --warmup-frac "$WARMUP_FRAC" --freeze-last-frac "$FREEZE_LAST_FRAC" \
-    --clip-grad "$CLIP_GRAD" --select-every "$SELECT_EVERY" \
+    --clip-grad "$CLIP_GRAD" \
     --eval-split "$EVAL_SPLIT" --track-every "$TRACK_EVERY" \
     --embed-dim "$EMBED_DIM" --heads "$HEADS" --run-name "$RUN_NAME" $EXTRA_ARGS

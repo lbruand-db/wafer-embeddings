@@ -210,8 +210,6 @@ def fit_dino(
     log: Callable[[str], None] | None = None,
     log_every: int = 50,
     monitor: Callable[[int, dict[str, float]], None] | None = None,
-    select_fn: Callable[[], float] | None = None,
-    select_every: int = 0,
     track_fn: Callable[[int], None] | None = None,
     track_every: int = 0,
     neighbours: np.ndarray | None = None,
@@ -232,16 +230,13 @@ def fit_dino(
     ``wd_schedule`` (see ``param_groups``); None leaves the optimizer's decay alone.
 
     Every ``log_every`` steps, ``collapse_stats`` + grad norm are computed and passed to
-    ``monitor(step, stats)`` and the ``log`` line. If ``select_fn`` is given (higher =
-    better; must not touch the reported eval queries), it is scored before training and
-    every ``select_every`` steps, and the best-scoring weights are restored at the end
-    (step 0 included, so a run that only degrades returns the untrained weights). The
-    chosen step is reported to ``monitor`` as ``best_step`` / ``best_score``.
+    ``monitor(step, stats)`` and the ``log`` line. Training runs the fixed schedule and
+    returns the final weights: no checkpoint is chosen by any score (labels are
+    evaluation-only, SPECS.md §8.7).
 
-    ``track_fn(step)`` is a log-only hook called before training and every
-    ``track_every`` steps, e.g. to record val metrics over training. Its last call (at
-    ``steps``) comes after any keep-best restore, so it describes the returned weights. It
-    never changes the weights, so no label it looks at can steer training.
+    ``track_fn(step)`` is a log-only hook called before training, every ``track_every``
+    steps and at the end, e.g. to record val metrics over training. It never changes the
+    weights, so no label it looks at can steer training.
 
     ``neighbours`` ((N, k) indices into ``wafers``, e.g. ``positives.descriptor_neighbours``)
     turns on descriptor-guided positives: each step, every batch wafer also brings one
@@ -257,19 +252,6 @@ def fit_dino(
     tt0, tt1 = teacher_temp
     m0, m1 = momentum
     losses: list[float] = []
-    best: tuple[float, int, dict] | None = None
-
-    def _select(step: int) -> None:
-        nonlocal best
-        score = select_fn()  # ty: ignore[call-non-callable]
-        if log is not None:
-            log(f"step {step}/{steps} select_score={score:.4f}")
-        if best is None or score > best[0]:
-            snap = {k: v.detach().clone() for k, v in dino.state_dict().items()}
-            best = (score, step, snap)
-
-    if select_fn is not None:
-        _select(0)
     if track_fn is not None and track_every:
         track_fn(0)
     for step in range(1, steps + 1):
@@ -321,19 +303,10 @@ def fit_dino(
                     f"t_maxp={stats['t_maxp']:.4f} emb_std={stats['emb_std']:.3f} "
                     f"grad_norm={stats['grad_norm']:.3f}"
                 )
-        if select_fn is not None and select_every and (step % select_every == 0 or step == steps):
-            _select(step)
         if track_fn is not None and track_every and step % track_every == 0 and step < steps:
             track_fn(step)
-    if best is not None:
-        score, best_step, snap = best
-        dino.load_state_dict(snap)
-        if log is not None:
-            log(f"restored best weights from step {best_step} (select_score={score:.4f})")
-        if monitor is not None:
-            monitor(steps, {"best_step": float(best_step), "best_score": score})
     if track_fn is not None and track_every:
-        track_fn(steps)  # after any restore: the last point describes the returned weights
+        track_fn(steps)  # the last point describes the returned weights
     return losses
 
 

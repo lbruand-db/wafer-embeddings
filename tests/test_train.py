@@ -219,50 +219,6 @@ def test_clip_grad_bounds_the_update():
     assert float((after - before).norm()) <= 1e-3 + 1e-6
 
 
-def test_fit_dino_restores_best_selected_weights():
-    # a selection score that peaks at step 2 -> the step-2 weights are restored
-    scores = iter([0.1, 0.2, 0.9, 0.3, 0.4])  # steps 0, 1, 2, 3, 4
-    snaps: dict[int, torch.Tensor] = {}
-    holder: dict = {}
-
-    def select():
-        w = holder["dino"].student_enc.state_dict()
-        key = next(iter(w))
-        snaps[len(snaps)] = w[key].detach().clone()
-        return next(scores)
-
-    wafers = [tk.tokenize(_disk(i)) for i in range(6)]
-    dino = _tiny_dino(embed_dim=16)
-    holder["dino"] = dino
-    opt = torch.optim.SGD(
-        list(dino.student_enc.parameters()) + list(dino.student_head.parameters()), lr=0.3
-    )
-    seen = []
-    fit_dino(
-        dino,
-        DINOLoss(out_dim=64),
-        opt,
-        wafers,
-        steps=4,
-        batch_size=4,
-        rng=np.random.default_rng(0),
-        select_fn=select,
-        select_every=1,
-        monitor=lambda s, st: seen.append(st),
-    )
-    key = next(iter(dino.student_enc.state_dict()))
-    assert torch.equal(dino.student_enc.state_dict()[key], snaps[2])
-    assert seen[-1]["best_step"] == 2.0 and seen[-1]["best_score"] == 0.9
-
-
-def test_selection_score_uses_only_given_maps():
-    from wafer_embeddings.train import selection_score
-
-    labels = np.array([0, 0, 1, 1, 2, 2] * 3)
-    emb = np.eye(3)[labels].astype(np.float64)
-    assert selection_score(emb, labels, n_classes=3) == 1.0
-
-
 def test_g1_xgroup_metrics_remove_the_same_group_shortcut():
     # embeddings encode only the group; labels follow the group except across groups.
     # Group A: label 0 in bank and queries; group B: label 1. A "group detector" scores
@@ -287,13 +243,3 @@ def test_g1_xgroup_metrics_keep_real_defect_signal():
     assert m["xgroup_knn_acc"] == 1.0 and m["xgroup_knn_macro_recall"] == 1.0
     # each query has only 2 cross-group queries (one per label) -> 1 of 2 is a hit
     assert m["xgroup_precision@10"] == 0.5
-
-
-def test_selection_score_with_groups_ignores_the_group_shortcut():
-    from wafer_embeddings.train import selection_score
-
-    groups = np.array(["A", "A", "B", "B"] * 4, dtype=object)
-    labels = np.array([0, 0, 1, 1] * 4)  # label == group
-    emb = np.array([[1.0, 0.0] if g == "A" else [0.0, 1.0] for g in groups])
-    assert selection_score(emb, labels, n_classes=2) == 1.0
-    assert selection_score(emb, labels, n_classes=2, groups=groups) == 0.0

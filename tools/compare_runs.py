@@ -58,7 +58,7 @@ def main(argv=None) -> None:  # pragma: no cover - needs a workspace
 
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--profile", default=None)
-    p.add_argument("--experiment", default="/Users/lucas.bruand@databricks.com/wafer-embeddings")
+    p.add_argument("--experiment", default=None, help="Default: your wafer-embeddings one.")
     p.add_argument("--split", default="val")
     p.add_argument("--band", nargs="*", default=[], help="Run names of one recipe, many seeds.")
     p.add_argument("--runs", nargs="*", default=[], help="Other run names to compare.")
@@ -67,7 +67,10 @@ def main(argv=None) -> None:  # pragma: no cover - needs a workspace
         import os
 
         os.environ["DATABRICKS_CONFIG_PROFILE"] = a.profile
-    mlflow.set_tracking_uri("databricks")
+    from wafer_embeddings.tracking import default_experiment, use_databricks
+
+    use_databricks()
+    a.experiment = a.experiment or default_experiment()
     exp = mlflow.get_experiment_by_name(a.experiment)
     if exp is None:
         raise SystemExit(f"experiment {a.experiment} not found")

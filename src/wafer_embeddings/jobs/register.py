@@ -117,8 +117,10 @@ def main(argv=None) -> None:  # pragma: no cover - needs a workspace
     from wafer_embeddings.serving.encoder import WaferEncoder
     from wafer_embeddings.serving.pyfunc import CHECKPOINT, WaferEncoderModel
 
+    from wafer_embeddings.tracking import use_databricks
+
     a = _args(argv)
-    mlflow.set_registry_uri("databricks-uc")
+    use_databricks()
     if a.experiment:
         mlflow.set_experiment(a.experiment)
     if a.latest_run_name:

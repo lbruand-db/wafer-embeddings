@@ -93,9 +93,9 @@ def main(argv=None) -> None:  # pragma: no cover - needs a checkpoint + the parq
 
     from wafer_embeddings.jobs.register import check_unscored, test_tags
     from wafer_embeddings.serving.pyfunc import CHECKPOINT
+    from wafer_embeddings.tracking import use_databricks
 
-    mlflow.set_tracking_uri("databricks")  # not a local ./mlflow.db
-    mlflow.set_registry_uri("databricks-uc")
+    use_databricks()  # not a local ./mlflow.db
     client = mlflow.MlflowClient()
     check_unscored(a.model, a.version, client.get_model_version(a.model, a.version).tags)
     root = mlflow.artifacts.download_artifacts(f"models:/{a.model}/{a.version}")

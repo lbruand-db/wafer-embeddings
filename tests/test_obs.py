@@ -35,3 +35,10 @@ def test_get_logger_is_configured_once():
     assert a is b
     assert a.level == logging.INFO
     assert len(a.handlers) == 1  # not duplicated on repeated calls
+
+
+def test_experiment_path_matches_ai_runtime_layout():
+    from wafer_embeddings.tracking import EXPERIMENT_NAME, experiment_path
+
+    assert experiment_path("a@b.com") == f"/Users/a@b.com/{EXPERIMENT_NAME}"
+    assert experiment_path("a@b.com", "x") == "/Users/a@b.com/x"

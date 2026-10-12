@@ -121,7 +121,9 @@ def _resolve_checkpoint(catalog: str, schema: str, model: str, alias: str):
 
     import mlflow  # ty: ignore[unresolved-import]
 
-    mlflow.set_registry_uri("databricks-uc")
+    from wafer_embeddings.tracking import use_databricks
+
+    use_databricks()
     fqn = f"{catalog}.{schema}.{model}"
     version = mlflow.MlflowClient().get_model_version_by_alias(fqn, alias).version
     local = mlflow.artifacts.download_artifacts(f"models:/{fqn}/{version}")

@@ -59,7 +59,7 @@ def main(argv=None) -> None:  # pragma: no cover - needs checkpoints + the parqu
     from wafer_embeddings.data.common import NO_DIE
     from wafer_embeddings.data.rows import rows_to_maps, shape_groups
     from wafer_embeddings.data.wm811k import CLASS_NAMES
-    from wafer_embeddings.eval.baselines import pixel_grid_features, polar_fail_embedding
+    from wafer_embeddings.eval.baselines import PixelPCA, polar_fail_embedding
     from wafer_embeddings.jobs.train import load_eval_table, load_train_table
     from wafer_embeddings.serving import WaferEncoder, build_encoder
     from wafer_embeddings.train import g1_metrics
@@ -95,12 +95,9 @@ def main(argv=None) -> None:  # pragma: no cover - needs checkpoints + the parqu
     # descriptor target on the same capped tokens the encoders see
     fit_w = [ref.tokenize_map(m) for m in fit_maps]
     val_w = [ref.tokenize_map(m) for m in maps]
-    fx = np.stack([pixel_grid_features(w) for w in fit_w])
-    mu = fx.mean(axis=0)
-    evals, evecs = np.linalg.eigh((fx - mu).T @ (fx - mu))
-    basis = evecs[:, np.argsort(evals)[::-1][: a.dim]]
-    t_fit = (fx - mu) @ basis
-    t_val = (np.stack([pixel_grid_features(w) for w in val_w]) - mu) @ basis
+    pca = PixelPCA(a.dim).fit(fit_w)
+    t_fit = pca.transform(fit_w, normalize=False)
+    t_val = pca.transform(val_w, normalize=False)
 
     keys = ("xgroup_knn_macro_recall", "xgroup_precision@10", "map@10")
     chance = float(np.mean([(shapes == x).mean() for x in shapes]))

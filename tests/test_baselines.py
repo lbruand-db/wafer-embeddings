@@ -92,3 +92,27 @@ def test_wafer_raster_and_image():
     np.testing.assert_allclose(img[:, 0, 0], white, rtol=1e-5)  # nearest upsampling of cell 0
     empty = TokenizedWafer(np.zeros((0, 3), np.float32), np.zeros((0,), np.int64))
     assert wafer_raster(empty, size=4).sum() == 0
+
+
+def test_pixel_pca_fit_on_one_set_transform_another():
+    from wafer_embeddings.eval.baselines import PixelPCA, descriptor_embedding
+
+    import pytest
+
+    train = [_center(31), _center(41), _edge_loc(31, 1), _edge_loc(41, -1)] * 3
+    pca = PixelPCA(dim=3, size=8).fit(train)
+    z = pca.transform([_center(51), _edge_loc(51, 1)])
+    assert z.shape == (2, 3)
+    np.testing.assert_allclose(np.linalg.norm(z, axis=1), 1.0, atol=1e-5)
+    raw = pca.transform([_center(51)], normalize=False)
+    assert np.linalg.norm(raw) > 1e-3  # unnormalized coefficients
+    # fitting and transforming the same set is the old one-shot embedding
+    np.testing.assert_allclose(
+        PixelPCA(3, 8).fit(train).transform(train), pixel_pca_embedding(train, dim=3, size=8)
+    )
+    with pytest.raises(RuntimeError):
+        PixelPCA().transform(train)
+    assert descriptor_embedding("polar", train).shape[0] == len(train)
+    assert descriptor_embedding("pixel", train, dim=3).shape == (len(train), 3)
+    with pytest.raises(ValueError):
+        descriptor_embedding("nope", train)

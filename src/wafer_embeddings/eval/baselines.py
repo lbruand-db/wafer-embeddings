@@ -66,16 +66,57 @@ def pixel_grid_features(w: TokenizedWafer, size: int = 32) -> np.ndarray:
     return (bad / np.maximum(total, 1.0)).ravel()
 
 
+class PixelPCA:
+    """Flattened-pixel FAIL rasters (``pixel_grid_features``) -> PCA (no labels).
+
+    ``fit`` learns the mean raster and the top ``dim`` components on one set of wafers
+    (e.g. the train sample); ``transform`` projects any wafers onto that frozen basis, so
+    a served model and its eval use the same descriptor.
+    """
+
+    def __init__(self, dim: int = 64, size: int = 32):
+        self.dim, self.size = dim, size
+        self.mean: np.ndarray | None = None
+        self.basis: np.ndarray | None = None  # (size^2, dim)
+
+    def _rasters(self, wafers: list[TokenizedWafer]) -> np.ndarray:
+        return np.stack([pixel_grid_features(w, self.size) for w in wafers]).astype(np.float32)
+
+    def fit(self, wafers: list[TokenizedWafer]) -> PixelPCA:
+        x = self._rasters(wafers)
+        self.mean = x.mean(axis=0)
+        x -= self.mean
+        # top components from the (size^2 x size^2) covariance: cheap for 100k+ wafers
+        evals, evecs = np.linalg.eigh(x.T.astype(np.float64) @ x)
+        top = np.argsort(evals)[::-1][: min(self.dim, len(wafers))]
+        self.basis = evecs[:, top].astype(np.float32)
+        return self
+
+    def transform(self, wafers: list[TokenizedWafer], normalize: bool = True) -> np.ndarray:
+        """(N, dim) PCA coefficients, L2-normalized unless ``normalize=False``."""
+        if self.mean is None or self.basis is None:
+            raise RuntimeError("PixelPCA.transform before fit")
+        z = (self._rasters(wafers) - self.mean) @ self.basis
+        return z / (np.linalg.norm(z, axis=1, keepdims=True) + 1e-12) if normalize else z
+
+
 def pixel_pca_embedding(wafers: list[TokenizedWafer], dim: int = 64, size: int = 32) -> np.ndarray:
     """Flattened-pixel FAIL rasters reduced by PCA to ``dim``, L2-normalized (no training).
 
     PCA is fit on the wafers passed in (no labels), like the polar baseline's z-scoring,
     so the result is an unsupervised (N, min(dim, N, size**2)) embedding.
     """
-    x = np.stack([pixel_grid_features(w, size) for w in wafers]).astype(np.float32)
-    x -= x.mean(axis=0)
-    # top components from the (size^2 x size^2) covariance: cheap for 100k+ wafers
-    evals, evecs = np.linalg.eigh(x.T.astype(np.float64) @ x)
-    top = evecs[:, np.argsort(evals)[::-1][: min(dim, len(wafers))]].astype(np.float32)
-    z = x @ top
-    return z / (np.linalg.norm(z, axis=1, keepdims=True) + 1e-12)
+    return PixelPCA(dim, size).fit(wafers).transform(wafers)
+
+
+DESCRIPTORS = ("pixel", "polar")
+
+
+def descriptor_embedding(name: str, wafers: list[TokenizedWafer], dim: int = 64) -> np.ndarray:
+    """A training-free descriptor of ``wafers`` by name: ``pixel`` (pixel-PCA, ``dim``
+    components, orientation-aware) or ``polar`` (rotation-invariant polar FAIL histogram)."""
+    if name == "pixel":
+        return pixel_pca_embedding(wafers, dim=dim)
+    if name == "polar":
+        return polar_fail_embedding(wafers)
+    raise ValueError(f"descriptor must be one of {DESCRIPTORS}, got {name!r}")

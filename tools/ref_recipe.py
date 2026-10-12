@@ -85,14 +85,10 @@ def main(argv=None) -> None:  # pragma: no cover - CPU training run
     print(f"recipe {c.recipe}: {r} train={len(train_w)} eval={len(eval_w)}", flush=True)
     neighbours = None
     if a.nn_positives:
-        from wafer_embeddings.eval.baselines import pixel_pca_embedding, polar_fail_embedding
+        from wafer_embeddings.eval.baselines import descriptor_embedding
         from wafer_embeddings.train.positives import descriptor_neighbours
 
-        desc = (
-            pixel_pca_embedding(train_w, dim=a.embed_dim)
-            if a.nn_descriptor == "pixel"
-            else polar_fail_embedding(train_w)
-        )
+        desc = descriptor_embedding(a.nn_descriptor, train_w, dim=a.embed_dim)
         neighbours = descriptor_neighbours(desc, a.nn_positives)
 
     enc = build_encoder(vars(a))

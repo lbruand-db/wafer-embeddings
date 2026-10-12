@@ -18,6 +18,7 @@ import numpy as np
 
 from wafer_embeddings.data.rows import shape_groups
 from wafer_embeddings.data.wm811k import CLASS_NAMES
+from wafer_embeddings.eval.baselines import DESCRIPTORS
 from wafer_embeddings.obs import get_logger, stage
 from wafer_embeddings.train import (
     embed_all,
@@ -132,7 +133,7 @@ def _args(argv=None):
     p.add_argument(
         "--nn-descriptor",
         default="pixel",
-        choices=["pixel", "polar"],
+        choices=list(DESCRIPTORS),
         help="Descriptor for --nn-positives: the flattened FAIL raster + PCA (orientation-"
         "aware; better neighbours on WM-811K) or the rotation-invariant polar histogram.",
     )
@@ -319,7 +320,11 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
     import pyarrow.dataset as ds
     import torch
 
-    from wafer_embeddings.eval.baselines import pixel_pca_embedding, polar_fail_embedding
+    from wafer_embeddings.eval.baselines import (
+        descriptor_embedding,
+        pixel_pca_embedding,
+        polar_fail_embedding,
+    )
     from wafer_embeddings.eval.metrics import effective_rank, rankme
     from wafer_embeddings.model.dino import DinoModel, DINOHead, DINOLoss
     from wafer_embeddings.model.encoder import count_parameters
@@ -345,11 +350,7 @@ def main(argv=None) -> None:  # pragma: no cover - needs Spark/MLflow/GPU
     neighbours = None
     if a.nn_positives:
         with stage(log, f"{a.nn_descriptor} neighbours (k={a.nn_positives}) of the train sample"):
-            desc = (
-                pixel_pca_embedding(train_wafers, dim=a.embed_dim)
-                if a.nn_descriptor == "pixel"
-                else polar_fail_embedding(train_wafers)
-            )
+            desc = descriptor_embedding(a.nn_descriptor, train_wafers, dim=a.embed_dim)
             neighbours = descriptor_neighbours(desc, a.nn_positives, device=device)
     if a.label_positives:
         log.warning("ABLATION: same-class positives use TRAIN LABELS (diagnostic, not servable)")
